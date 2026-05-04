@@ -18,6 +18,7 @@ from codeagents.tools_native.code import (
     python_module,
     rm,
     run_python,
+    safe_shell,
     tail,
     wc,
 )
@@ -163,6 +164,37 @@ def test_shell_approval_is_scoped_to_executable(tmp_path: Path) -> None:
     compound = agent.call_tool("shell", {"command": f"{command} && echo unsafe"})
     assert compound.confirmation_required is True
     assert compound.result["status"] == "confirmation_required"
+
+
+def test_safe_shell_supports_cwd_and_allowlisted_shell_syntax(tmp_path: Path) -> None:
+    (tmp_path / "crate").mkdir()
+    (tmp_path / "crate" / "Cargo.toml").write_text(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "crate" / "src").mkdir()
+    (tmp_path / "crate" / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    workspace = _workspace(tmp_path)
+
+    with_cwd = safe_shell(workspace, {"command": "cargo check 2>&1 | head -50", "cwd": "crate"})
+    with_cd = safe_shell(
+        workspace,
+        {"command": f"cd {tmp_path / 'crate'} && cargo check 2>&1 | head -50"},
+    )
+
+    assert with_cwd["exit_code"] == 0
+    assert with_cd["exit_code"] == 0
+
+
+def test_safe_shell_rejects_unallowlisted_compound_commands(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    try:
+        safe_shell(workspace, {"command": "echo ok | rm -rf nope"})
+    except ValueError as exc:
+        assert "Command not allowlisted" in str(exc)
+    else:
+        raise AssertionError("safe_shell should reject unallowlisted commands in pipelines")
 
 
 def test_mkdir_creates_only_workspace_directories(tmp_path: Path) -> None:

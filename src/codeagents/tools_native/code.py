@@ -1282,13 +1282,20 @@ def propose_patch(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
 def safe_shell(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     command = args.get("command")
     argv = args.get("argv")
+    cwd = _command_cwd(workspace, args.get("cwd"))
+    timeout = int(args.get("timeout", 60))
     if command and isinstance(command, str):
+        if _uses_shell_syntax(command):
+            validation_error = _validate_safe_shell_command(workspace, command, cwd)
+            if validation_error:
+                raise ValueError(validation_error)
+            return _run(["/bin/sh", "-c", command], cwd=cwd, timeout=timeout)
         argv = shlex.split(command)
     if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
         raise ValueError("Provide 'command' (string) or 'argv' (list of strings)")
     if Path(argv[0]).name not in SAFE_COMMANDS:
         raise ValueError(f"Command not allowlisted: {argv[0]}. Allowed: {', '.join(sorted(SAFE_COMMANDS))}")
-    return _run(argv, cwd=workspace.root)
+    return _run(argv, cwd=cwd, timeout=timeout)
 
 
 def run_python(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
@@ -1353,7 +1360,11 @@ def dangerous_shell(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any
     command = args.get("command")
     if not isinstance(command, str) or not command.strip():
         raise ValueError("Provide 'command' as a non-empty string")
-    return _run(["/bin/sh", "-c", command], cwd=workspace.root, timeout=int(args.get("timeout", 60)))
+    return _run(
+        ["/bin/sh", "-c", command],
+        cwd=_command_cwd(workspace, args.get("cwd")),
+        timeout=int(args.get("timeout", 60)),
+    )
 
 
 def conda_env_list(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
@@ -1464,6 +1475,84 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 60) -> dict[str, Any]:
         "stdout": completed.stdout,
         "stderr": completed.stderr,
     }
+
+
+def _command_cwd(workspace: Workspace, raw_cwd: Any) -> Path:
+    if raw_cwd is None or raw_cwd == "":
+        return workspace.root
+    if not isinstance(raw_cwd, str):
+        raise ValueError("cwd must be a workspace-relative string")
+    cwd = workspace.resolve_inside(raw_cwd)
+    if not cwd.exists():
+        raise ValueError(f"cwd not found: {raw_cwd}")
+    if not cwd.is_dir():
+        raise ValueError(f"cwd is not a directory: {raw_cwd}")
+    return cwd
+
+
+def _uses_shell_syntax(command: str) -> bool:
+    return any(token in command for token in ("&&", "||", "|", ">", "<", "2>&1", "2>"))
+
+
+def _validate_safe_shell_command(workspace: Workspace, command: str, cwd: Path) -> str | None:
+    if any(char in command for char in "\n\r;`$(){}"):
+        return "safe_shell rejects command substitution, variables, semicolons, braces, and multiline commands"
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError as exc:
+        return f"Invalid shell command: {exc}"
+    if not tokens:
+        return "Provide a non-empty command"
+
+    operators = {"&&", "||", "|"}
+    redirects = {">", ">>", "<", "2>", "2>>", "1>", "1>>"}
+    inline_redirects = {"2>&1", "1>&2"}
+    expect_command = True
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in operators:
+            if expect_command:
+                return f"Unexpected shell operator: {token}"
+            expect_command = True
+            idx += 1
+            continue
+        if token in inline_redirects:
+            idx += 1
+            continue
+        if token in redirects:
+            if idx + 1 >= len(tokens):
+                return f"Missing redirection target after {token}"
+            idx += 2
+            continue
+        if token.startswith((">", ">>", "2>", "2>>", "1>", "1>>")) and token not in {">", ">>"}:
+            idx += 1
+            continue
+        if expect_command:
+            executable = Path(token).name
+            if executable == "cd":
+                if idx + 1 >= len(tokens):
+                    return "cd requires a workspace-relative target"
+                target_arg = tokens[idx + 1]
+                try:
+                    target = (cwd / target_arg).resolve()
+                    target.relative_to(workspace.root)
+                except Exception:
+                    return f"cd target escapes workspace: {target_arg}"
+                if not target.exists() or not target.is_dir():
+                    return f"cd target is not a directory: {target_arg}"
+            elif executable not in SAFE_COMMANDS:
+                return (
+                    f"Command not allowlisted: {token}. "
+                    f"Allowed: {', '.join(sorted(SAFE_COMMANDS | {'cd'}))}"
+                )
+            expect_command = False
+        idx += 1
+    if expect_command:
+        return "Command cannot end with a shell operator"
+    return None
 
 
 def _require_url(args: dict[str, Any], key: str) -> str:

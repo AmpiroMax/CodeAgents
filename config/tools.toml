@@ -601,13 +601,33 @@ kind = "native"
 permission = "shell_safe"
 description = """Run an allowlisted shell command in the workspace. Prefer dedicated tools (`run_python`, `python_module`, `flake8`, `grep`, `git_status`, `git_diff`) when possible. This is for safe checks only, not destructive operations.
 
+Params: `command`, `argv`, `cwd`, and `timeout`. Pass either `command` (string) or `argv` (array of strings). `cwd` is an optional workspace-relative directory. `timeout` defaults to 60 seconds.
+
+The command executable must be allowlisted. Limited shell syntax is supported for allowlisted commands: `cd <workspace path> && ...`, `&&`, `||`, pipes, and `2>&1`, so checks like `cargo check 2>&1 | head -50` work. Unsafe shell features such as variables, command substitution, semicolons, and multiline commands are rejected. Use confirmation-gated `shell` for arbitrary commands.
+
 Example: safe_shell {"command":"cargo check"}
-Example: safe_shell {"command":"python -m compileall src"}"""
+Example: safe_shell {"command":"cargo check 2>&1 | head -50","cwd":"crates/terminal-agent","timeout":120}
+Example: safe_shell {"argv":["python","-m","compileall","src"],"timeout":120}"""
 
 [tools.safe_shell.params.command]
 type = "string"
-description = "Shell command to run, e.g. 'git log --oneline -10' or 'cargo check'"
-required = true
+description = "Command string to run. The executable must be allowlisted. May use limited shell syntax for allowlisted commands."
+required = false
+
+[tools.safe_shell.params.argv]
+type = "array"
+description = "Command argv array. Use this when no shell syntax is needed, e.g. [\"python\", \"-m\", \"compileall\", \"src\"]."
+required = false
+
+[tools.safe_shell.params.cwd]
+type = "string"
+description = "Workspace-relative directory to run from. Default: workspace root."
+required = false
+
+[tools.safe_shell.params.timeout]
+type = "integer"
+description = "Timeout in seconds. Default: 60"
+required = false
 
 [tools.run_python]
 kind = "native"
@@ -719,13 +739,15 @@ kind = "native"
 permission = "shell_dangerous"
 description = """Run an arbitrary installed shell command in the workspace, including commands that do not have a dedicated tool such as `ollama list`. This is dangerous and requires explicit user confirmation in the TUI. Prefer dedicated tools when they exist.
 
+Params: `command` (required), `cwd`, and `timeout`. `cwd` is an optional workspace-relative directory. `timeout` defaults to 60 seconds.
+
 Persistent approval is scoped to the first executable name for simple commands. For example, approving `ollama list` with "always" allows future `ollama ...` commands in this workspace, but does not approve all shell commands. Compound shell syntax such as `;`, `&&`, pipes, redirects, variables, and subcommands can only be approved once and will not be remembered.
 
 Do not use this for file deletion; use `rm`, which is workspace-scoped and has extra safety checks.
 
 Example: shell {"command":"ollama list"}
 Example: shell {"command":"brew --version"}
-Example: shell {"command":"python scripts/local_tool.py --check","timeout":120}"""
+Example: shell {"command":"python scripts/local_tool.py --check","cwd":"tools","timeout":120}"""
 
 [tools.shell.params.command]
 type = "string"
@@ -735,6 +757,11 @@ required = true
 [tools.shell.params.timeout]
 type = "integer"
 description = "Timeout in seconds. Default: 60"
+required = false
+
+[tools.shell.params.cwd]
+type = "string"
+description = "Workspace-relative directory to run from. Default: workspace root."
 required = false
 
 # ─── Conda environments ──────────────────────────────────────────────
