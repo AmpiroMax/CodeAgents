@@ -1,0 +1,33 @@
+[runtime]
+base_url = "http://localhost:11434/v1"
+api_key_env = "CODEAGENTS_API_KEY"
+default_model = "general"
+embedding_model = "nomic-embed-text"
+
+[models.general]
+name = "gemma4:31b"
+role = "general"
+context_tokens = 32768
+temperature = 0.4
+notes = "General-purpose knowledge and conversation."
+
+[models.code]
+name = "qwen3.6:27b-coding-nvfp4"
+role = "coding"
+context_tokens = 32768
+temperature = 0.15
+notes = "Primary coding model — Qwen 3.6 27B coding variant."
+
+[models.code_fast]
+name = "qwen2.5-coder:7b"
+role = "coding-fast"
+context_tokens = 16384
+temperature = 0.1
+notes = "Fast 7B model for quick edits and small tasks."
+
+[models.reasoning]
+name = "gpt-oss:20b"
+role = "reasoning"
+context_tokens = 32768
+temperature = 0.2
+notes = "GPT-OSS 20B for reasoning and hard questions."

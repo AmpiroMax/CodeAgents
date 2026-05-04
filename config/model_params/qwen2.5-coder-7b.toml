@@ -1,0 +1,22 @@
+# Generation parameters for qwen2.5-coder:7b.
+#
+# Source (official Qwen team, May 2026):
+#   - https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct/blob/main/generation_config.json
+#   - https://github.com/QwenLM/Qwen2.5-Coder/blob/main/README.md
+#
+# Official defaults: temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.1.
+# This model has 32k native context (extendable via YaRN).
+
+[generation]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repeat_penalty = 1.1
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 32768
+num_predict = -1
+seed = 0
+stop = []

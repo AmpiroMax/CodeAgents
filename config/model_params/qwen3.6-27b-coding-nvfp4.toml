@@ -1,0 +1,30 @@
+# Generation parameters for qwen3.6:27b-coding-nvfp4.
+#
+# Source (official Qwen team, May 2026):
+#   - https://huggingface.co/Qwen/Qwen3.6-35B-A3B
+#   - https://github.com/QwenLM/Qwen3-Coder/blob/main/README.md
+#
+# Recommended profiles (Qwen 3.6 family):
+#   Thinking + precise coding (this profile):
+#     temperature=0.6, top_p=0.95, top_k=20, min_p=0.0,
+#     presence_penalty=0.0, repetition_penalty=1.0
+#   Thinking + general:
+#     temperature=1.0, top_p=0.95, top_k=20, presence_penalty=1.5
+#   Non-thinking (instruct):
+#     temperature=0.7, top_p=0.80, top_k=20, presence_penalty=1.5
+#
+# 256k native context window; we cap to 32k by default to fit on M3 Max.
+
+[generation]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repeat_penalty = 1.0
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 32768
+num_predict = -1
+seed = 0
+stop = []

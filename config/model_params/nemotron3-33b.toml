@@ -1,0 +1,30 @@
+# Generation parameters for nemotron3:33b (NVIDIA Nemotron-3-Nano-30B-A3B).
+#
+# Sources (May 2026):
+#   - https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+#   - https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b
+#   - https://unsloth.ai/docs/models/nemotron-3
+#
+# NVIDIA's official guidance:
+#   General chat / reasoning:    temperature = 1.0,  top_p = 1.0
+#   Tool calling / agentic flow: temperature = 0.6,  top_p = 0.95
+# Unsloth's llama-server example for tool calling additionally sets
+#   --min_p 0.01.
+#
+# This is a hybrid Mamba-2 / MoE model with 1M-token native context and
+# a /think system-token to toggle thinking mode. We use the tool-calling
+# profile by default because the agent loop is dominated by tool calls.
+
+[generation]
+temperature = 0.6
+top_p = 0.95
+top_k = 0           # disabled per NVIDIA docs (no top-k cutoff)
+min_p = 0.01
+repeat_penalty = 1.0
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 32768
+num_predict = -1
+seed = 0
+stop = []

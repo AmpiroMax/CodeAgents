@@ -1,0 +1,28 @@
+{
+    "id": "d90019b5-9303-49d7-b98d-3d4a3de37a61",
+    "timestamp": "2026-05-02T09:17:50.708482+00:00",
+    "request": {
+        "chat": {
+            "id": "449702c3cc6f7cdbc27e5743",
+            "messages": [
+                {
+                    "id": "5dd7679898a91ac41c440365",
+                    "role": "user",
+                    "content": [
+                        {
+                            "trainable": false,
+                            "type": "text",
+                            "text": "Привет"
+                        }
+                    ],
+                    "index": 0
+                }
+            ],
+            "meta": {}
+        },
+        "model": "qwen_general",
+        "meta": {}
+    },
+    "error": "Local runtime is unavailable. Start Ollama, llama.cpp server, or an MLX OpenAI-compatible server at http://localhost:11434/v1.",
+    "meta": {}
+}

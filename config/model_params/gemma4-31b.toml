@@ -1,0 +1,29 @@
+# Generation parameters for gemma4:31b (Google).
+#
+# Sources (May 2026):
+#   - https://ai.google.dev/gemma/docs/core/model_card_4
+#   - https://ollama.com/library/gemma4
+#   - https://unsloth.ai/docs/models/gemma-4
+#   - https://ollama.com/library/gemma4:latest/blobs/56380ca2ab89  (params blob)
+#
+# Official Google standardized config (use across all use cases):
+#   temperature=1.0, top_p=0.95, top_k=64.
+# Repetition/presence penalty should stay at 1.0 unless you observe looping.
+# Native context: 256K; default to 32K for responsiveness on M3 Max.
+#
+# Thinking is controlled via the system prompt (insert <|think|> at the start
+# to enable; remove to disable). Ollama applies the chat template for you.
+
+[generation]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+min_p = 0.0
+repeat_penalty = 1.0
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 32768
+num_predict = -1
+seed = 0
+stop = []

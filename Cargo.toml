@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/tool-host", "crates/terminal-agent"]
+resolver = "2"

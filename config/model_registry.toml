@@ -1,0 +1,35 @@
+[models.gemma4_general]
+display_name = "Gemma 4"
+backend = "ollama"
+runtime_model = "gemma4:31b"
+profile = "general"
+weights_path = ""
+source = "ollama:gemma4:31b"
+notes = "General-purpose knowledge and conversation."
+
+[models.qwen36_code]
+display_name = "Qwen 3.6 Coding"
+backend = "ollama"
+runtime_model = "qwen3.6:27b-coding-nvfp4"
+profile = "code"
+weights_path = ""
+source = "ollama:qwen3.6:27b-coding-nvfp4"
+notes = "Primary coding model — Qwen 3.6 27B coding variant."
+
+[models.qwen_code_fast]
+display_name = "Qwen Coder Fast"
+backend = "ollama"
+runtime_model = "qwen2.5-coder:7b"
+profile = "code_fast"
+weights_path = ""
+source = "ollama:qwen2.5-coder:7b"
+notes = "Fast 7B model for quick edits and small tasks."
+
+[models.gpt_oss_reasoning]
+display_name = "GPT-OSS"
+backend = "ollama"
+runtime_model = "gpt-oss:20b"
+profile = "reasoning"
+weights_path = ""
+source = "ollama:gpt-oss:20b"
+notes = "GPT-OSS 20B for reasoning and hard questions."

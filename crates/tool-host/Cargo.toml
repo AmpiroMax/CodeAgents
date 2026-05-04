@@ -1,0 +1,7 @@
+[package]
+name = "codeagents-tool-host"
+version = "0.1.0"
+edition = "2024"
+description = "Future Rust tool host for local CodeAgents tools."
+
+[dependencies]

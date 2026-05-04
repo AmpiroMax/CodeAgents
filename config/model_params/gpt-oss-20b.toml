@@ -1,0 +1,28 @@
+# Generation parameters for gpt-oss:20b (OpenAI).
+#
+# Sources (May 2026):
+#   - https://github.com/openai/gpt-oss/blob/main/README.md
+#   - https://huggingface.co/openai/gpt-oss-20b
+#   - https://replicate.com/openai/gpt-oss-20b/readme
+#
+# Official recommendation: temperature=1.0, top_p=1.0.
+# Reasoning effort is set inside the system prompt:
+#   "Reasoning: low" | "Reasoning: medium" | "Reasoning: high"
+#
+# This model is known to loop in some setups; defaults below add a mild
+# repetition guard while staying close to the official recipe. Bump
+# `repeat_penalty` to 1.15-1.25 if you still see loops.
+
+[generation]
+temperature = 1.0
+top_p = 1.0
+top_k = 0          # 0 = disabled (matches official "no nucleus restriction")
+min_p = 0.0
+repeat_penalty = 1.1
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 16384
+num_predict = -1
+seed = 0
+stop = []

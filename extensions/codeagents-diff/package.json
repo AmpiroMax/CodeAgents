@@ -1,0 +1,53 @@
+{
+  "name": "codeagents-diff",
+  "displayName": "CodeAgents Diff",
+  "description": "Native diff visualization for CodeAgents edits with accept/reject buttons.",
+  "version": "0.1.0",
+  "publisher": "codeagents",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:.codeagents",
+    "workspaceContains:.codeagents/pending_edits"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeagents.acceptEdit",
+        "title": "CodeAgents: Accept Edit",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codeagents.rejectEdit",
+        "title": "CodeAgents: Reject Edit",
+        "icon": "$(close)"
+      },
+      {
+        "command": "codeagents.showLatestEdit",
+        "title": "CodeAgents: Show Latest Pending Edit"
+      }
+    ],
+    "configuration": {
+      "title": "CodeAgents Diff",
+      "properties": {
+        "codeagents.autoOpenDiff": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the diff view when a new pending edit appears."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
