@@ -2072,7 +2072,7 @@ fn shorten_path(path: &str, max_len: usize) -> String {
     if let Some(home) = std::env::var_os("HOME") {
         let home = home.to_string_lossy();
         if path.starts_with(home.as_ref()) {
-            let short = format!("~{}", &path[home.len()..]);
+            let short = format!("~{}", path.strip_prefix(home.as_ref()).unwrap_or(path));
             if short.chars().count() <= max_len {
                 return short;
             }
