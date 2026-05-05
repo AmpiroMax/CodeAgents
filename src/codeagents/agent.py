@@ -20,7 +20,9 @@ class ConfirmationDecision:
     remember: bool = False
 
 
-def submit_confirmation(decision_id: str, approved: bool, *, remember: bool = False) -> bool:
+def submit_confirmation(
+    decision_id: str, approved: bool, *, remember: bool = False
+) -> bool:
     """Deliver a decision for a pending tool confirmation. Returns True if delivered."""
     q = _PENDING_DECISIONS.get(decision_id)
     if q is None:
@@ -28,13 +30,22 @@ def submit_confirmation(decision_id: str, approved: bool, *, remember: bool = Fa
     q.put(ConfirmationDecision(approved=approved, remember=remember))
     return True
 
+
 from codeagents.audit import AuditLog
 from codeagents.config import PROJECT_ROOT, AppConfig, load_app_config
 from codeagents.model_router import ModelRouter
-from codeagents.permissions import PermissionPolicy, WorkspaceApprovalStore, load_permission_policy
+from codeagents.permissions import (
+    PermissionPolicy,
+    WorkspaceApprovalStore,
+    load_permission_policy,
+)
 from codeagents.runtime import OpenAICompatibleRuntime
 from codeagents.schemas import (
-    Chat, FunctionParameter, FunctionSpec, SystemMessage, TextContent,
+    Chat,
+    FunctionParameter,
+    FunctionSpec,
+    SystemMessage,
+    TextContent,
 )
 from codeagents.tools import ToolRegistry, ToolSpec, load_tool_registry
 from codeagents.tools_native import register_code_tools
@@ -100,7 +111,9 @@ class AgentCore:
     ) -> None:
         self.workspace = workspace
         self.config = config or load_app_config()
-        self.policy = policy or load_permission_policy(PROJECT_ROOT / "config" / "tools.toml")
+        self.policy = policy or load_permission_policy(
+            PROJECT_ROOT / "config" / "tools.toml"
+        )
         self.approvals = WorkspaceApprovalStore(workspace.root)
         self.router = ModelRouter(self.config)
         self.runtime = OpenAICompatibleRuntime(self.config.runtime)
@@ -169,8 +182,8 @@ class AgentCore:
 
         yield {"type": "model_info", "model": model_name}
 
-        max_turns = 100
-        max_auto_continues = 4
+        max_turns = 1000
+        max_auto_continues = 100
         auto_continues_used = 0
         for turn in range(max_turns):
             full_content = ""
@@ -209,7 +222,11 @@ class AgentCore:
                         f"(thinking only={had_thinking})."
                     )
                     yield {"type": "notice", "level": "warn", "message": reason}
-                    yield {"type": "done", "model": model_name, "stop_reason": "empty_turns"}
+                    yield {
+                        "type": "done",
+                        "model": model_name,
+                        "stop_reason": "empty_turns",
+                    }
                     return
                 auto_continues_used += 1
                 nudge = (
@@ -238,14 +255,16 @@ class AgentCore:
             for i, tc in enumerate(collected_tool_calls):
                 call_id = f"call_{turn}_{i}"
                 tc["_id"] = call_id
-                tc_openai.append({
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": tc["arguments"],
-                    },
-                })
+                tc_openai.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["arguments"],
+                        },
+                    }
+                )
 
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if full_content:
@@ -268,10 +287,23 @@ class AgentCore:
                     invalid_args = self._invalid_tool_arguments(name, args, spec)
                     if invalid_args is not None:
                         result_text = _json.dumps(invalid_args, ensure_ascii=False)
-                        yield {"type": "tool_result", "name": name, "result": result_text, "_id": tc["_id"]}
-                        messages.append({"role": "tool", "tool_call_id": tc["_id"], "content": result_text})
+                        yield {
+                            "type": "tool_result",
+                            "name": name,
+                            "result": result_text,
+                            "_id": tc["_id"],
+                        }
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc["_id"],
+                                "content": result_text,
+                            }
+                        )
                         continue
-                    needs_confirm, confirm_warning = self._confirmation_requirements(name, args, spec)
+                    needs_confirm, confirm_warning = self._confirmation_requirements(
+                        name, args, spec
+                    )
                 except Exception:
                     pass
 
@@ -295,13 +327,28 @@ class AgentCore:
                     finally:
                         _PENDING_DECISIONS.pop(decision_id, None)
                     if not decision.approved:
-                        result_text = _json.dumps({"status": "rejected_by_user", "tool": name})
-                        yield {"type": "tool_result", "name": name, "result": result_text, "_id": tc["_id"]}
-                        messages.append({"role": "tool", "tool_call_id": tc["_id"], "content": result_text})
+                        result_text = _json.dumps(
+                            {"status": "rejected_by_user", "tool": name}
+                        )
+                        yield {
+                            "type": "tool_result",
+                            "name": name,
+                            "result": result_text,
+                            "_id": tc["_id"],
+                        }
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc["_id"],
+                                "content": result_text,
+                            }
+                        )
                         continue
                     if decision.remember and self._remember_supported(name, args):
                         try:
-                            approval_label = self._persist_remembered_approval(name, args, spec)
+                            approval_label = self._persist_remembered_approval(
+                                name, args, spec
+                            )
                             yield {
                                 "type": "notice",
                                 "level": "info",
@@ -331,11 +378,13 @@ class AgentCore:
                                 "result": result_text,
                                 "_id": tc["_id"],
                             }
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc["_id"],
-                                "content": result_text,
-                            })
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc["_id"],
+                                    "content": result_text,
+                                }
+                            )
                             continue
                         handler = self.tools.handler(name)
                         result_value = handler(args)
@@ -359,11 +408,13 @@ class AgentCore:
                     "result": result_text,
                     "_id": tc["_id"],
                 }
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["_id"],
-                    "content": result_text,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["_id"],
+                        "content": result_text,
+                    }
+                )
 
         # Reached max_turns without a clean text answer. Tell the user why so
         # they don't see a silent stop, and ask the model for a final summary.
@@ -375,14 +426,16 @@ class AgentCore:
                 "Asking the model to summarize progress and what is left."
             ),
         }
-        messages.append({
-            "role": "user",
-            "content": (
-                "You've reached the maximum number of tool-call iterations for this "
-                "request. Stop calling tools now. In plain text, summarize: (1) what "
-                "you did, (2) what is still left, (3) any blockers."
-            ),
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "You've reached the maximum number of tool-call iterations for this "
+                    "request. Stop calling tools now. In plain text, summarize: (1) what "
+                    "you did, (2) what is still left, (3) any blockers."
+                ),
+            }
+        )
         try:
             for event in self.runtime.chat_stream(
                 model=model, messages=messages, tool_schemas=None
@@ -420,17 +473,21 @@ class AgentCore:
                 schema: dict[str, Any] = {"type": p.type}
                 if p.enum:
                     schema["enum"] = list(p.enum)
-                params.append(FunctionParameter(
-                    name=p.name,
-                    schema=schema,
-                    description=p.description,
-                    required=p.required,
-                ))
-            specs.append(FunctionSpec(
-                name=ts.name,
-                description=ts.description or "",
-                parameters=params,
-            ))
+                params.append(
+                    FunctionParameter(
+                        name=p.name,
+                        schema=schema,
+                        description=p.description,
+                        required=p.required,
+                    )
+                )
+            specs.append(
+                FunctionSpec(
+                    name=ts.name,
+                    description=ts.description or "",
+                    parameters=params,
+                )
+            )
         self._tool_specs_cache = specs
         return specs
 
@@ -450,7 +507,9 @@ class AgentCore:
                 result=invalid_args,
                 confirmation_required=False,
             )
-        confirmation_required, _warning = self._confirmation_requirements(tool_name, arguments, spec)
+        confirmation_required, _warning = self._confirmation_requirements(
+            tool_name, arguments, spec
+        )
         if confirmation_required:
             result = {"status": "confirmation_required", "tool": tool_name}
         else:
@@ -581,7 +640,9 @@ class AgentCore:
             )
         return ""
 
-    def _shell_command_name(self, tool_name: str, arguments: dict[str, Any]) -> str | None:
+    def _shell_command_name(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> str | None:
         if tool_name != "shell":
             return None
         command = arguments.get("command")
@@ -632,8 +693,12 @@ class AgentCore:
         summary = index_summary(self.workspace.root)
         languages = summary.get("languages", {})
         top_dirs = summary.get("top_dirs", {})
-        language_text = ", ".join(f"{name}={count}" for name, count in languages.items()) or "none"
-        dir_text = ", ".join(f"{name}={count}" for name, count in top_dirs.items()) or "none"
+        language_text = (
+            ", ".join(f"{name}={count}" for name, count in languages.items()) or "none"
+        )
+        dir_text = (
+            ", ".join(f"{name}={count}" for name, count in top_dirs.items()) or "none"
+        )
         relevant_text = ""
         if prompt.strip():
             semantic = int(summary.get("embedded_chunks", 0) or 0) > 0
@@ -643,11 +708,15 @@ class AgentCore:
                     prompt,
                     semantic=semantic,
                     embedding_client=self.runtime if semantic else None,
-                    embedding_model=self.config.runtime.embedding_model if semantic else None,
+                    embedding_model=(
+                        self.config.runtime.embedding_model if semantic else None
+                    ),
                     limit=8,
                 )
             except Exception:
-                results = search_index(self.workspace.root, prompt, semantic=False, limit=8)
+                results = search_index(
+                    self.workspace.root, prompt, semantic=False, limit=8
+                )
             if results:
                 relevant_text = "\nRelevant indexed matches:\n" + "\n".join(
                     f"- {result.path}:{result.start_line}-{result.end_line} "

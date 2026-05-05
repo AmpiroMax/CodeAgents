@@ -1,0 +1,39 @@
+# Generation parameters for qwen3-coder-next:q4_K_M.
+# Auto-generated with conservative defaults; edit freely. Never overwritten.
+#
+# Where to find recommended values for any model:
+#   1. Hugging Face model card -> "Sampling Parameters" / generation_config.json
+#      e.g. https://huggingface.co/<org>/<model>/blob/main/generation_config.json
+#   2. Ollama library page -> Parameters tab, e.g. https://ollama.com/library/<model>
+#   3. Original repo README on GitHub
+#   4. https://docs.unsloth.ai/  (collects recommended params for popular models)
+#
+# Standard fields (passed directly to OpenAI-compatible API):
+#   temperature      0.0..2.0   randomness; lower = more deterministic
+#   top_p            0.0..1.0   nucleus sampling
+#   presence_penalty -2.0..2.0  discourage repetition by topic
+#   frequency_penalty -2.0..2.0 discourage exact-token repetition
+#   seed                        deterministic sampling when non-zero
+#   stop                        list of stop strings
+#
+# Ollama-only (forwarded via `options`):
+#   top_k                       restrict sampling to top-K tokens
+#   min_p            0.0..1.0   prune low-probability tail (Qwen3 recommends 0.0)
+#   repeat_penalty   1.0..2.0   penalize repeated tokens (1.1 = Ollama default)
+#   repeat_last_n               window of tokens checked by repeat_penalty
+#   num_ctx                     context window in tokens
+#   num_predict      -1=∞       max tokens to generate (-1 = until EOS)
+
+[generation]
+temperature = 0.2
+top_p = 0.9
+top_k = 40
+min_p = 0.0
+repeat_penalty = 1.1
+repeat_last_n = 256
+presence_penalty = 0.0
+frequency_penalty = 0.0
+num_ctx = 8192
+num_predict = -1
+seed = 0
+stop = []
