@@ -9,7 +9,8 @@ echo ""
 
 # 1. Stop running services so binaries can be replaced
 echo "[1/4] Stopping services..."
-pkill -f "CodeAgentsServices" 2>/dev/null || true
+pkill -f "/Applications/CodeAgents.app/Contents/MacOS/CodeAgents" 2>/dev/null || true
+pkill -f "CodeAgents.app/Contents/MacOS/CodeAgents" 2>/dev/null || true
 if command -v ca-services &>/dev/null; then
     ca-services stop 2>/dev/null || true
 fi
@@ -41,6 +42,7 @@ echo "=== Done ==="
 echo ""
 echo "  ca            — terminal UI (updated)"
 echo "  ca-services   — service manager (updated)"
-echo "  CodeAgents Services.app — macOS app (updated in /Applications)"
+echo "  CodeAgents.app — macOS launcher + встроенный чат (обновлено в /Applications)"
 echo ""
-echo "  Launch 'CodeAgents Services' app to start Ollama + API."
+echo "  Запуск: приложение CodeAgents — поднимает Ollama, API и открывает http://127.0.0.1:8765/ui/."
+echo "  Workspace по умолчанию: ~/CodeAgents (создаётся автоматически)."

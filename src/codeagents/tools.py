@@ -28,6 +28,8 @@ class ToolSpec:
     description: str
     enabled: bool = True
     params: tuple[ParamSpec, ...] = ()
+    # When set (MCP tools), used to build OpenAI tool JSON instead of params.
+    mcp_input_schema: dict[str, Any] | None = None
 
 
 class ToolRegistry:
@@ -45,10 +47,15 @@ class ToolRegistry:
                 description=existing.description or spec.description,
                 enabled=spec.enabled,
                 params=existing.params if not spec.params and existing.params else spec.params,
+                mcp_input_schema=spec.mcp_input_schema or existing.mcp_input_schema,
             )
         self._tools[spec.name] = spec
         if handler is not None:
             self._handlers[spec.name] = handler
+
+    def unregister(self, name: str) -> None:
+        self._tools.pop(name, None)
+        self._handlers.pop(name, None)
 
     def list(self, *, include_disabled: bool = False) -> list[ToolSpec]:
         tools = self._tools.values()
@@ -105,15 +112,7 @@ def load_tool_registry(path: Path) -> ToolRegistry:
             )
         )
 
-    for name, value in raw.get("mcp", {}).items():
-        registry.register(
-            ToolSpec(
-                name=f"mcp.{name}",
-                kind="mcp",
-                permission=Permission(value.get("permission", Permission.READ_ONLY)),
-                description=value.get("description", ""),
-                enabled=bool(value.get("enabled", False)),
-            )
-        )
+    # [mcp.*] entries are server configs; tools are registered at runtime by
+    # codeagents.mcp.bridge.register_mcp_tools (see AgentCore).
 
     return registry

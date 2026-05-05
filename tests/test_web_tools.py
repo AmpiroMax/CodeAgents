@@ -493,15 +493,15 @@ def test_docs_search_restricts_domain_and_fetches(tmp_path: Path, monkeypatch: A
     assert any("site%3Adocs.pytest.org" in url for url in seen_urls)
 
 
-def test_agent_exposes_web_tools_with_network_permission(tmp_path: Path) -> None:
+def test_agent_exposes_web_tools_with_safe_defaults(tmp_path: Path) -> None:
     agent = AgentCore.from_workspace(tmp_path)
     names = {tool.name for tool in agent.tools.list()}
 
     assert {"web_search", "docs_search", "curl"}.issubset(names)
     assert "web_fetch" not in names
+    # curl keeps the network permission (it can have side-effects),
+    # web_search/docs_search are now read-only and confirmation-free.
     assert agent.tools.get("curl").permission.value == "network"
+    assert agent.tools.get("web_search").permission.value == "read_only"
+    assert agent.tools.get("docs_search").permission.value == "read_only"
     assert "Example:" in agent.tools.get("web_search").description
-
-    result = agent.call_tool("web_search", {"query": "python docs"})
-    assert result.confirmation_required is True
-    assert result.result["status"] == "confirmation_required"

@@ -33,9 +33,58 @@ required = false
 [tools.pwd]
 kind = "native"
 permission = "read_only"
-description = """Print the current workspace directory. Use this when you need to confirm which project the agent is operating in.
+description = """Print the agent's current working directory and the workspace trust boundary.
+
+Returns: cwd (where relative paths resolve), workspace_root (write boundary), and read_only (true when cwd has cd-ed outside workspace_root). Use this to confirm context before running file or shell tools.
 
 Example: pwd {}"""
+
+[tools.cd]
+kind = "native"
+permission = "read_only"
+description = """Change the agent's current working directory.
+
+Behaviour:
+- Relative paths resolve against the current cwd; absolute paths and ~ are accepted.
+- The new cwd may live anywhere on disk, including outside the workspace root.
+- While cwd is INSIDE workspace_root: full permissions remain in effect (writes, shell, etc. work as configured).
+- While cwd is OUTSIDE workspace_root: the agent enters READ-ONLY mode. Reads (read_file, cat, ls, grep, head, tail, wc) work anywhere, but write/destructive tools (write_file, edit_file, mkdir, mv, rm, shell-with-side-effects) refuse with a "path escapes workspace" error.
+- Subsequent shell tools (safe_shell, run_command) execute from the new cwd by default.
+- cd does NOT change which directory is trusted. To move the trust boundary itself (and refresh approvals/.codeagents), use change_workspace.
+
+Returns: cwd, workspace_root, inside_workspace (bool), read_only (bool), notice (human-readable summary).
+
+Example: cd {"path":"src/codeagents"}
+Example: cd {"path":"~/other-project"}      # leaves workspace, agent becomes read-only
+Example: cd {"path":".."}"""
+
+[tools.cd.params.path]
+type = "string"
+description = "Target directory. Relative paths resolve against the current cwd; ~ and absolute paths are also accepted."
+required = true
+
+[tools.change_workspace]
+kind = "native"
+permission = "workspace_write"
+description = """Switch the workspace root (trust boundary) to a new directory and reset cwd to it.
+
+When to use: the user wants the agent to start operating on a different project / folder as its primary working area. For temporary navigation, prefer `cd` instead — it is non-destructive and does not touch approvals.
+
+Behaviour:
+- Creates the target directory if it does not exist, plus a .codeagents/ skeleton inside it.
+- Resets cwd to the new root.
+- Re-binds per-workspace state: approvals, audit log, and confirmation history. Approvals from the previous workspace do NOT carry over — the user may need to re-grant write/network permissions on the first relevant tool call inside the new root.
+- Requires user confirmation (workspace_write permission) because it changes the security boundary.
+
+Returns: workspace_root, cwd, notice describing the permission reset.
+
+Example: change_workspace {"path":"~/code/new-project"}
+Example: change_workspace {"path":"/Users/me/scratchpad"}"""
+
+[tools.change_workspace.params.path]
+type = "string"
+description = "Absolute or ~-relative path to the new workspace root. Created if missing."
+required = true
 
 [tools.ls]
 kind = "native"

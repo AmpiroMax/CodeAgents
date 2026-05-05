@@ -35,6 +35,7 @@ from codeagents.audit import AuditLog
 from codeagents.config import PROJECT_ROOT, AppConfig, load_app_config
 from codeagents.model_router import ModelRouter
 from codeagents.permissions import (
+    Permission,
     PermissionPolicy,
     WorkspaceApprovalStore,
     load_permission_policy,
@@ -44,9 +45,27 @@ from codeagents.schemas import (
     Chat,
     FunctionParameter,
     FunctionSpec,
+    function_parameters_from_json_schema,
+    merge_chat_meta,
     SystemMessage,
     TextContent,
 )
+from codeagents.stream_events import (
+    AgentStreamEvent,
+    StreamDeltaEvent,
+    StreamDoneEvent,
+    StreamErrorEvent,
+    StreamModelInfoEvent,
+    StreamNoticeEvent,
+    StreamContextUsageEvent,
+    StreamThinkingEvent,
+    StreamToolCallDeltaEvent,
+    StreamToolCallEvent,
+    StreamToolCallStartEvent,
+    StreamToolPendingEvent,
+    StreamToolResultEvent,
+)
+from codeagents.mcp.bridge import register_mcp_tools
 from codeagents.tools import ToolRegistry, ToolSpec, load_tool_registry
 from codeagents.tools_native import register_code_tools
 from codeagents.workspace import Workspace
@@ -91,7 +110,61 @@ reject the entire tool call with "invalid character in string escape code", \
 and the tool will not execute.\
 """
 
+MODE_SYSTEM_ADDENDUM = {
+    "ask": (
+        "\n\n## Session mode: ask\n"
+        "You are in ask mode: prefer explanations and read-only inspection. "
+        "Only read-only tools are exposed; do not insist on write or shell actions."
+    ),
+    "plan": (
+        "\n\n## Session mode: plan\n"
+        "You MUST produce an actionable plan and persist it via the `create_plan` tool. "
+        "You may use any read-only tool (read_file, ls, grep, web_search, docs_search, ...) "
+        "to investigate before drafting. You may NOT call write/shell/network-write tools.\n\n"
+        "Workflow:\n"
+        "  1. Briefly think through scope, constraints, and tradeoffs out loud (this thinking "
+        "is NOT the plan itself).\n"
+        "  2. Call `create_plan` exactly once. Arguments:\n"
+        "       title   — ≤ 60 chars, descriptive (e.g. 'Add SQLite backed audit log')\n"
+        "       summary — 1–3 short paragraphs explaining context, key tradeoffs, and the "
+        "                   final shape of the change. NO numbered list here.\n"
+        "       steps   — ordered list of {title, detail} objects. ``title`` is a short "
+        "                   verb-led step (≤ 8 words). ``detail`` describes the substep, "
+        "                   files involved, what 'done' looks like.\n"
+        "  3. After create_plan, give the user a short message: 'Plan saved as: <title>. "
+        "Click Build to execute, or refine via patch_plan.' Do NOT execute the steps yourself "
+        "in plan mode — wait for Build.\n\n"
+        "Up to 3 plans can be active at once; if create_plan returns a limit error, ask "
+        "the user to reject one first.\n"
+    ),
+}
+
+
+EXECUTE_PLAN_SYSTEM_ADDENDUM = (
+    "\n\n## Plan execution\n"
+    "There is one or more active plans pinned to this chat. Treat each step in order:\n"
+    "  - Before starting step N, call `mark_step(plan_id, step_n=N, status='in_progress')`.\n"
+    "  - Do the work using whatever tools are needed (write_file, run_command, etc.).\n"
+    "  - When the step is finished, call `mark_step(..., status='done')` (or 'skipped' "
+    "with a brief note explaining why).\n"
+    "  - Then move on to the next step. Do NOT pause between steps; finish the entire "
+    "plan unless the user explicitly tells you to stop.\n"
+    "  - If the live work makes the plan stale, call `patch_plan` to revise the remaining "
+    "steps before continuing.\n"
+    "If a plan is already partially done (some steps marked done), pick up at the first "
+    "step whose status is NOT 'done' or 'skipped'.\n"
+)
+
 CODING_TASKS = {"code", "coding", "edit", "fast"}
+
+
+def _allowed_permissions_for_mode(mode: str) -> set[Permission] | None:
+    """None means all enabled tools; otherwise restrict by tool permission."""
+    if mode == "ask":
+        return {Permission.READ_ONLY}
+    if mode == "plan":
+        return {Permission.READ_ONLY, Permission.PROPOSE}
+    return None
 
 
 @dataclass(frozen=True)
@@ -120,7 +193,21 @@ class AgentCore:
         self.audit = AuditLog(workspace.root / ".codeagents" / "audit.jsonl")
         self.tools = load_tool_registry(PROJECT_ROOT / "config" / "tools.toml")
         register_code_tools(self.tools, workspace)
-        self._tool_specs_cache: list[FunctionSpec] | None = None
+        register_mcp_tools(self.tools, PROJECT_ROOT / "config" / "tools.toml")
+        self._tool_specs_cache: dict[str | None, list[FunctionSpec]] = {}
+        # React to change_workspace tool calls: refresh per-workspace state.
+        workspace.on_root_change.append(self._on_workspace_root_change)
+
+    def _on_workspace_root_change(self, workspace: Workspace) -> None:
+        """Refresh per-workspace state after change_workspace."""
+        self.approvals = WorkspaceApprovalStore(workspace.root)
+        self.audit = AuditLog(workspace.root / ".codeagents" / "audit.jsonl")
+        self._tool_specs_cache.clear()
+
+    def reroot(self, path: Path | str) -> Workspace:
+        """Public helper to switch the workspace root programmatically."""
+        self.workspace.change_root(path)
+        return self.workspace
 
     @classmethod
     def from_workspace(cls, path: Path | str = ".") -> "AgentCore":
@@ -160,7 +247,7 @@ class AgentCore:
 
     def complete_chat_stream(
         self, chat: Chat, *, task: str | None = "general"
-    ) -> Generator[dict[str, Any], None, None]:
+    ) -> Generator[AgentStreamEvent, None, None]:
         """Stream tokens with automatic tool-calling loop.
 
         Events are forwarded in real-time for responsive streaming.
@@ -174,13 +261,26 @@ class AgentCore:
         model_name = model.name
         if task in CODING_TASKS:
             chat = self._chat_with_workspace_context(chat)
-        tools = list(chat.functions) if chat.functions else self._agent_tools_as_specs()
-        chat = self._ensure_system_prompt(chat)
+        # Pin the active chat id onto the workspace so plan tools (and any
+        # future per-chat side-effects) write into <chats_dir>/<chat_id>/plans/
+        # without forcing the model to thread chat_id through every call.
+        self.workspace.chat_id = chat.id or ""
+        meta = merge_chat_meta(chat.meta)
+        mode = meta.mode
+        if mode == "general":
+            mode = "agent"
+        allowed = _allowed_permissions_for_mode(mode)
+        tools = (
+            list(chat.functions)
+            if chat.functions
+            else self._agent_tools_as_specs(allowed_permissions=allowed)
+        )
+        chat = self._ensure_system_prompt(chat, mode=mode, model_name=model_name)
 
         messages = chat.to_openai_messages()
         tool_schemas = [t.to_json_schema() for t in tools] if tools else None
 
-        yield {"type": "model_info", "model": model_name}
+        yield StreamModelInfoEvent(model=model_name)
 
         max_turns = 1000
         max_auto_continues = 100
@@ -198,17 +298,37 @@ class AgentCore:
                 etype = event.get("type")
                 if etype == "delta":
                     full_content += event.get("content", "")
-                    yield event
+                    yield StreamDeltaEvent(content=event.get("content", ""))
                 elif etype == "thinking":
                     had_thinking = True
-                    yield event
+                    yield StreamThinkingEvent(content=event.get("content", ""))
                 elif etype == "tool_call":
                     collected_tool_calls.append(event)
-                    yield event
-                elif etype in ("tool_call_start", "tool_call_delta"):
-                    yield event
+                    yield StreamToolCallEvent(
+                        name=str(event.get("name", "")),
+                        arguments=str(event.get("arguments", "")),
+                        tool_call_id=str(event.get("_id", "")),
+                    )
+                elif etype == "tool_call_start":
+                    yield StreamToolCallStartEvent(
+                        index=int(event.get("index", 0)),
+                        name=str(event.get("name", "")),
+                    )
+                elif etype == "tool_call_delta":
+                    yield StreamToolCallDeltaEvent(
+                        index=int(event.get("index", 0)),
+                        delta=str(event.get("delta", "")),
+                        name=str(event.get("name", "")),
+                    )
+                elif etype == "context_usage":
+                    yield StreamContextUsageEvent(
+                        prompt_tokens=int(event.get("prompt_tokens", 0) or 0),
+                        completion_tokens=int(event.get("completion_tokens", 0) or 0),
+                        total_tokens=int(event.get("total_tokens", 0) or 0),
+                        context_window=int(event.get("context_window", 0) or 0),
+                    )
                 elif etype == "error":
-                    yield event
+                    yield StreamErrorEvent(message=str(event.get("message", "")))
 
             # Auto-continue when the model produced an empty turn (no text and
             # no tool calls). This happens with reasoning models that "think"
@@ -221,12 +341,8 @@ class AgentCore:
                         f"{max_auto_continues + 1} turns in a row "
                         f"(thinking only={had_thinking})."
                     )
-                    yield {"type": "notice", "level": "warn", "message": reason}
-                    yield {
-                        "type": "done",
-                        "model": model_name,
-                        "stop_reason": "empty_turns",
-                    }
+                    yield StreamNoticeEvent(level="warn", message=reason)
+                    yield StreamDoneEvent(model=model_name, stop_reason="empty_turns")
                     return
                 auto_continues_used += 1
                 nudge = (
@@ -234,17 +350,18 @@ class AgentCore:
                     "Continue the user's task. If you finished, say so explicitly. "
                     "If you need to call a tool, do it now."
                 )
-                yield {
-                    "type": "notice",
-                    "level": "info",
-                    "message": f"Auto-continue ({auto_continues_used}/{max_auto_continues}): empty turn",
-                }
+                yield StreamNoticeEvent(
+                    level="info",
+                    message=(
+                        f"Auto-continue ({auto_continues_used}/{max_auto_continues}): empty turn"
+                    ),
+                )
                 messages.append({"role": "assistant", "content": ""})
                 messages.append({"role": "user", "content": nudge})
                 continue
 
             if not collected_tool_calls:
-                yield {"type": "done", "model": model_name, "stop_reason": "completed"}
+                yield StreamDoneEvent(model=model_name, stop_reason="completed")
                 return
 
             # Intermediate turn with tool calls — execute every one of them.
@@ -287,12 +404,11 @@ class AgentCore:
                     invalid_args = self._invalid_tool_arguments(name, args, spec)
                     if invalid_args is not None:
                         result_text = _json.dumps(invalid_args, ensure_ascii=False)
-                        yield {
-                            "type": "tool_result",
-                            "name": name,
-                            "result": result_text,
-                            "_id": tc["_id"],
-                        }
+                        yield StreamToolResultEvent(
+                            name=name,
+                            result=result_text,
+                            tool_call_id=tc["_id"],
+                        )
                         messages.append(
                             {
                                 "role": "tool",
@@ -311,15 +427,14 @@ class AgentCore:
                     decision_id = uuid.uuid4().hex
                     decision_q: queue.Queue = queue.Queue(maxsize=1)
                     _PENDING_DECISIONS[decision_id] = decision_q
-                    yield {
-                        "type": "tool_pending",
-                        "decision_id": decision_id,
-                        "name": name,
-                        "arguments": tc["arguments"],
-                        "remember_supported": self._remember_supported(name, args),
-                        "warning": confirm_warning,
-                        "_id": tc["_id"],
-                    }
+                    yield StreamToolPendingEvent(
+                        decision_id=decision_id,
+                        name=name,
+                        arguments=str(tc["arguments"]),
+                        remember_supported=self._remember_supported(name, args),
+                        warning=confirm_warning,
+                        tool_call_id=tc["_id"],
+                    )
                     try:
                         decision = decision_q.get(timeout=300)
                     except queue.Empty:
@@ -330,12 +445,11 @@ class AgentCore:
                         result_text = _json.dumps(
                             {"status": "rejected_by_user", "tool": name}
                         )
-                        yield {
-                            "type": "tool_result",
-                            "name": name,
-                            "result": result_text,
-                            "_id": tc["_id"],
-                        }
+                        yield StreamToolResultEvent(
+                            name=name,
+                            result=result_text,
+                            tool_call_id=tc["_id"],
+                        )
                         messages.append(
                             {
                                 "role": "tool",
@@ -349,20 +463,18 @@ class AgentCore:
                             approval_label = self._persist_remembered_approval(
                                 name, args, spec
                             )
-                            yield {
-                                "type": "notice",
-                                "level": "info",
-                                "message": (
+                            yield StreamNoticeEvent(
+                                level="info",
+                                message=(
                                     f"Approved {approval_label} for future use in workspace "
                                     f"{self.workspace.root}."
                                 ),
-                            }
+                            )
                         except Exception as exc:
-                            yield {
-                                "type": "notice",
-                                "level": "warn",
-                                "message": f"Failed to persist approval for {name}: {exc}",
-                            }
+                            yield StreamNoticeEvent(
+                                level="warn",
+                                message=f"Failed to persist approval for {name}: {exc}",
+                            )
 
                 try:
                     if needs_confirm:
@@ -372,12 +484,11 @@ class AgentCore:
                         if invalid_args is not None:
                             result_value = invalid_args
                             result_text = _json.dumps(result_value, ensure_ascii=False)
-                            yield {
-                                "type": "tool_result",
-                                "name": name,
-                                "result": result_text,
-                                "_id": tc["_id"],
-                            }
+                            yield StreamToolResultEvent(
+                                name=name,
+                                result=result_text,
+                                tool_call_id=tc["_id"],
+                            )
                             messages.append(
                                 {
                                     "role": "tool",
@@ -402,12 +513,11 @@ class AgentCore:
                 except Exception as exc:
                     result_text = _json.dumps({"error": str(exc)})
 
-                yield {
-                    "type": "tool_result",
-                    "name": name,
-                    "result": result_text,
-                    "_id": tc["_id"],
-                }
+                yield StreamToolResultEvent(
+                    name=name,
+                    result=result_text,
+                    tool_call_id=tc["_id"],
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -418,14 +528,13 @@ class AgentCore:
 
         # Reached max_turns without a clean text answer. Tell the user why so
         # they don't see a silent stop, and ask the model for a final summary.
-        yield {
-            "type": "notice",
-            "level": "warn",
-            "message": (
+        yield StreamNoticeEvent(
+            level="warn",
+            message=(
                 f"Reached the {max_turns}-turn tool-calling limit. "
                 "Asking the model to summarize progress and what is left."
             ),
-        }
+        )
         messages.append(
             {
                 "role": "user",
@@ -441,19 +550,65 @@ class AgentCore:
                 model=model, messages=messages, tool_schemas=None
             ):
                 etype = event.get("type")
-                if etype in ("delta", "thinking", "error"):
-                    yield event
+                if etype == "delta":
+                    yield StreamDeltaEvent(content=event.get("content", ""))
+                elif etype == "thinking":
+                    yield StreamThinkingEvent(content=event.get("content", ""))
+                elif etype == "context_usage":
+                    yield StreamContextUsageEvent(
+                        prompt_tokens=int(event.get("prompt_tokens", 0) or 0),
+                        completion_tokens=int(event.get("completion_tokens", 0) or 0),
+                        total_tokens=int(event.get("total_tokens", 0) or 0),
+                        context_window=int(event.get("context_window", 0) or 0),
+                    )
+                elif etype == "error":
+                    yield StreamErrorEvent(message=str(event.get("message", "")))
         except Exception as exc:
-            yield {"type": "error", "message": f"Summary turn failed: {exc}"}
-        yield {"type": "done", "model": model_name, "stop_reason": "max_turns"}
+            yield StreamErrorEvent(message=f"Summary turn failed: {exc}")
+        yield StreamDoneEvent(model=model_name, stop_reason="max_turns")
 
-    def _ensure_system_prompt(self, chat: Chat) -> Chat:
+    def _ensure_system_prompt(
+        self,
+        chat: Chat,
+        *,
+        mode: str = "agent",
+        model_name: str | None = None,
+    ) -> Chat:
         """Prepend the system prompt if the chat doesn't already have one."""
+        from codeagents.system_prompts import system_prompt_addendum
+
+        # Stack: model-specific addendum (per-mode override) + mode-level
+        # behavioural rules + (optionally) plan-execution rules. Order
+        # matters: model-specific lines sit closest to the base prompt so
+        # they read as "who you are", while plan-execution sits last as
+        # "what to do right now".
+        addendum = ""
+        model_block = system_prompt_addendum(model_name, mode)
+        if model_block:
+            addendum += "\n\n## Model profile\n" + model_block
+        addendum += MODE_SYSTEM_ADDENDUM.get(mode, "")
+        if mode != "plan" and self._has_active_plan_for_chat(chat):
+            addendum += EXECUTE_PLAN_SYSTEM_ADDENDUM
         if chat.messages and chat.messages[0].role == "system":
+            if not addendum:
+                return chat
+            first = chat.messages[0]
+            if isinstance(first, SystemMessage) and first.content:
+                c0 = first.content[0]
+                if isinstance(c0, TextContent):
+                    new_first = SystemMessage(
+                        index=first.index,
+                        content=[TextContent(text=c0.text + addendum)],
+                    )
+                    return Chat(
+                        messages=[new_first, *chat.messages[1:]],
+                        meta=chat.meta,
+                        functions=chat.functions,
+                    )
             return chat
         sys_msg = SystemMessage(
             index=0,
-            content=[TextContent(text=SYSTEM_PROMPT)],
+            content=[TextContent(text=SYSTEM_PROMPT + addendum)],
         )
         return Chat(
             messages=[sys_msg, *chat.messages],
@@ -461,26 +616,55 @@ class AgentCore:
             functions=chat.functions,
         )
 
-    def _agent_tools_as_specs(self) -> list[FunctionSpec]:
+    def _has_active_plan_for_chat(self, chat: Chat) -> bool:
+        """Whether the chat has any plan that's still draft/building."""
+        try:
+            from codeagents.plan_store import ACTIVE_STATUSES, PlanStore
+
+            store = PlanStore.global_default()
+            chat_id = chat.id or ""
+            for plan in store.list():
+                if plan.status not in ACTIVE_STATUSES:
+                    continue
+                if not chat_id or plan.chat_id == chat_id:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _agent_tools_as_specs(
+        self, *, allowed_permissions: set[Permission] | None = None
+    ) -> list[FunctionSpec]:
         """Convert registered tools into FunctionSpec with proper JSON Schema parameters."""
-        if self._tool_specs_cache is not None:
-            return self._tool_specs_cache
+        cache_key = (
+            "__all__"
+            if allowed_permissions is None
+            else ",".join(sorted(p.value for p in allowed_permissions))
+        )
+        cached = self._tool_specs_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         specs: list[FunctionSpec] = []
         for ts in self.tools.list():
-            params: list[FunctionParameter] = []
-            for p in ts.params:
-                schema: dict[str, Any] = {"type": p.type}
-                if p.enum:
-                    schema["enum"] = list(p.enum)
-                params.append(
-                    FunctionParameter(
-                        name=p.name,
-                        schema=schema,
-                        description=p.description,
-                        required=p.required,
+            if allowed_permissions is not None and ts.permission not in allowed_permissions:
+                continue
+            if ts.mcp_input_schema:
+                params = function_parameters_from_json_schema(ts.mcp_input_schema)
+            else:
+                params = []
+                for p in ts.params:
+                    schema: dict[str, Any] = {"type": p.type}
+                    if p.enum:
+                        schema["enum"] = list(p.enum)
+                    params.append(
+                        FunctionParameter(
+                            name=p.name,
+                            schema=schema,
+                            description=p.description,
+                            required=p.required,
+                        )
                     )
-                )
             specs.append(
                 FunctionSpec(
                     name=ts.name,
@@ -488,7 +672,7 @@ class AgentCore:
                     parameters=params,
                 )
             )
-        self._tool_specs_cache = specs
+        self._tool_specs_cache[cache_key] = specs
         return specs
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> ToolCallResult:
@@ -544,7 +728,11 @@ class AgentCore:
                     "Retry with a JSON object matching the tool schema."
                 ),
             }
-        allowed = {param.name for param in spec.params}
+        if spec.mcp_input_schema:
+            props = spec.mcp_input_schema.get("properties")
+            allowed = set(props.keys()) if isinstance(props, dict) else set()
+        else:
+            allowed = {param.name for param in spec.params}
         extra = sorted(key for key in arguments if key not in allowed)
         if not extra:
             return None

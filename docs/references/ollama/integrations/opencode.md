@@ -1,0 +1,33 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.ollama.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# OpenCode
+
+OpenCode is an open-source AI coding assistant that runs in your terminal.
+
+## Install
+
+Install the [OpenCode CLI](https://opencode.ai):
+
+```bash theme={"system"}
+curl -fsSL https://opencode.ai/install | bash
+```
+
+<Note>OpenCode requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash theme={"system"}
+ollama launch opencode
+```
+
+To configure without launching:
+
+```shell theme={"system"}
+ollama launch opencode --config
+```
+
+<Note>`ollama launch opencode` passes its configuration to OpenCode inline via the `OPENCODE_CONFIG_CONTENT` environment variable. OpenCode deep-merges its config sources on startup, so anything you declare in `~/.config/opencode/opencode.json` is still respected and available inside OpenCode. Models declared only in `opencode.json` won't appear in `ollama launch`'s model-selection menu.</Note>

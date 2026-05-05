@@ -1,8 +1,9 @@
 """Per-model generation parameters.
 
 Each model (gpt-oss:20b, qwen3.6:27b-coding-nvfp4, ...) gets its own TOML file
-under config/model_params/, allowing per-model tweaks: temperature, top_p,
-top_k, repeat_penalty, presence/frequency penalties, num_ctx, etc.
+under ``registry/model_params/`` (was ``config/model_params/`` prior to v3.0;
+the legacy path is still accepted as a fallback so older user setups keep
+working without a migration step).
 
 Files are auto-created with safe defaults the first time a model is used.
 Existing files are never overwritten.
@@ -17,7 +18,8 @@ from typing import Any
 
 from codeagents.config import PROJECT_ROOT
 
-PARAMS_DIR = PROJECT_ROOT / "config" / "model_params"
+PARAMS_DIR = PROJECT_ROOT / "registry" / "model_params"
+LEGACY_PARAMS_DIR = PROJECT_ROOT / "config" / "model_params"
 
 
 @dataclass
@@ -94,7 +96,17 @@ def _sanitize(model_name: str) -> str:
 
 
 def params_path(model_name: str) -> Path:
-    return PARAMS_DIR / f"{_sanitize(model_name)}.toml"
+    """Resolve the TOML for ``model_name``. Falls back to the legacy
+    ``config/model_params/`` location if the file lives there from an older
+    install, so users don't lose hand-tuned overrides on upgrade."""
+    fname = f"{_sanitize(model_name)}.toml"
+    new_path = PARAMS_DIR / fname
+    if new_path.exists():
+        return new_path
+    legacy = LEGACY_PARAMS_DIR / fname
+    if legacy.exists():
+        return legacy
+    return new_path
 
 
 _DEFAULT_TEMPLATE = """\
@@ -165,9 +177,13 @@ def load_params(model_name: str, *, default_temperature: float = 0.2) -> ModelPa
 
 
 def list_param_files() -> list[Path]:
-    if not PARAMS_DIR.exists():
-        return []
-    return sorted(PARAMS_DIR.glob("*.toml"))
+    seen: dict[str, Path] = {}
+    for base in (PARAMS_DIR, LEGACY_PARAMS_DIR):
+        if not base.exists():
+            continue
+        for path in base.glob("*.toml"):
+            seen.setdefault(path.name, path)
+    return [p for _, p in sorted(seen.items())]
 
 
 def ensure_for_models(model_names: list[str]) -> list[Path]:

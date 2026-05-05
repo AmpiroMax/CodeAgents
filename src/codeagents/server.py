@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
 import signal
 import threading
 import time
@@ -10,14 +12,36 @@ from pathlib import Path
 from typing import Any
 
 from codeagents.agent import AgentCore
+from codeagents.chat_attachments import save_chat_base64_upload
 from codeagents.chat_store import ChatStore
+from codeagents.plan_store import (
+    PlanLimitError,
+    PlanNotFoundError,
+    PlanStore,
+)
 from codeagents.config import load_app_config
 from codeagents.indexer import build_index, index_summary, search_index
 from codeagents.inference_log import InferenceLogger
 from codeagents.model_service import LocalModelService, RegisteredModel
 from codeagents.request_log import ServiceRequestLogger, ServiceRequestLogEntry
+from codeagents.resource_metrics import collect_resource_snapshot
 from codeagents.runtime import RuntimeErrorWithHint
+from codeagents.stream_events import StreamErrorEvent, stream_event_to_json
 from codeagents.schemas import BatchInferenceRequest, Chat, InferenceRequest
+
+
+def cors_origins_from_env() -> frozenset[str]:
+    """Origins allowed for browser clients (Vite dev server, etc.).
+
+    Set ``CODEAGENTS_CORS_ORIGINS`` to a comma-separated list. Empty string
+    disables CORS reflection (CLI/TUI clients do not send ``Origin``).
+    """
+    raw = os.environ.get(
+        "CODEAGENTS_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
@@ -27,12 +51,96 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     agent: AgentCore
     model_service: LocalModelService
     chat_store: ChatStore
+    plan_store: PlanStore
     request_logger: ServiceRequestLogger
+    allowed_cors_origins: frozenset[str] = frozenset()
+    gui_static_dir: Path | None = None
+
+    def _serve_gui_static(self, started: float) -> bool:
+        """Serve the built SPA from ``Handler.gui_static_dir`` under ``/ui/``."""
+        base = type(self).gui_static_dir
+        if base is None:
+            return False
+        root = Path(base)
+        if not root.is_dir():
+            return False
+        req_path = self.path.split("?", 1)[0]
+        if req_path == "/ui":
+            self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+            self.send_header("Location", "/ui/")
+            self.end_headers()
+            self._log_request("GET", {}, 301, started)
+            return True
+        if not req_path.startswith("/ui/"):
+            return False
+        rel = req_path.removeprefix("/ui/").strip()
+        if not rel or rel.endswith("/"):
+            rel = "index.html"
+        root_r = root.resolve()
+        try:
+            candidate = (root_r / rel).resolve()
+            candidate.relative_to(root_r)
+        except ValueError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            self._log_request("GET", {}, 404, started, error="gui_bad_path")
+            return True
+        if candidate.is_file():
+            return self._send_static_file(candidate, started)
+        index = root_r / "index.html"
+        if index.is_file():
+            return self._send_static_file(index, started)
+        self.send_error(HTTPStatus.NOT_FOUND)
+        self._log_request("GET", {}, 404, started, error="gui_missing")
+        return True
+
+    def _send_static_file(self, path: Path, started: float) -> bool:
+        data = path.read_bytes()
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype == "application/javascript":
+            ctype = f"{ctype}; charset=utf-8"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+        self._log_request("GET", {}, 200, started)
+        return True
+
+    def end_headers(self) -> None:
+        origin = self.headers.get("Origin")
+        if origin and origin in self.allowed_cors_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PATCH, DELETE, OPTIONS",
+            )
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type",
+            )
+            self.send_header("Access-Control-Max-Age", "86400")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.end_headers()
 
     def do_GET(self) -> None:
         started = time.perf_counter()
+        if self._serve_gui_static(started):
+            return
         if self.path == "/health":
-            self._send_json({"ok": True})
+            from codeagents import __version__ as _v
+
+            self._send_json({"ok": True, "version": _v})
+            self._log_request("GET", {}, 200, started)
+            return
+        if self.path == "/version":
+            from codeagents import __version__ as _v
+
+            self._send_json({"version": _v})
             self._log_request("GET", {}, 200, started)
             return
         if self.path == "/models":
@@ -119,6 +227,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"logs": self.request_logger.tail()})
             self._log_request("GET", {}, 200, started)
             return
+        if self.path == "/metrics/resources":
+            self._send_json(
+                collect_resource_snapshot(workspace_root=self.agent.workspace.root)
+            )
+            self._log_request("GET", {}, 200, started)
+            return
         if self.path == "/chats":
             self._send_json(
                 {
@@ -134,6 +248,45 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             chat_id = self.path.removeprefix("/chats/").strip("/")
             chat = self.chat_store.load(chat_id)
             self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
+            self._log_request("GET", {}, 200, started)
+            return
+        if self.path == "/plans" or self.path.startswith("/plans?"):
+            from urllib.parse import parse_qs, urlsplit
+
+            q = parse_qs(urlsplit(self.path).query)
+            status_filter = (q.get("status") or ["all"])[0].lower()
+            chat_filter = (q.get("chat_id") or [""])[0]
+            plans = self.plan_store.list()
+            if status_filter == "active":
+                from codeagents.plan_store import ACTIVE_STATUSES
+                plans = [p for p in plans if p.status in ACTIVE_STATUSES]
+            elif status_filter in {"draft", "building", "completed", "rejected"}:
+                plans = [p for p in plans if p.status == status_filter]
+            if chat_filter:
+                plans = [p for p in plans if p.chat_id == chat_filter]
+            self._send_json({"plans": [p.to_dict() for p in plans]})
+            self._log_request("GET", {}, 200, started)
+            return
+        if self.path.startswith("/plans/"):
+            tail = self.path.removeprefix("/plans/").strip("/")
+            if tail.endswith("/markdown"):
+                plan_id = tail[: -len("/markdown")].strip("/")
+                try:
+                    plan = self.plan_store.load(plan_id)
+                except PlanNotFoundError:
+                    self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    self._log_request("GET", {}, 404, started, error="plan_not_found")
+                    return
+                self._send_json({"id": plan.id, "markdown": plan.to_markdown()})
+                self._log_request("GET", {}, 200, started)
+                return
+            try:
+                plan = self.plan_store.load(tail)
+            except PlanNotFoundError:
+                self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+                self._log_request("GET", {}, 404, started, error="plan_not_found")
+                return
+            self._send_json({"plan": plan.to_dict()})
             self._log_request("GET", {}, 200, started)
             return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
@@ -176,10 +329,40 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
                 self._log_request("POST", payload, 200, started)
                 return
+            if self.path.startswith("/plans/") and self.path.endswith("/reject"):
+                plan_id = self.path[len("/plans/"):-len("/reject")].strip("/")
+                if not plan_id:
+                    raise ValueError("Missing plan id in path")
+                try:
+                    plan = self.plan_store.reject(plan_id)
+                except PlanNotFoundError:
+                    self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    self._log_request("POST", payload, 404, started, error="plan_not_found")
+                    return
+                self._send_json({"plan": plan.to_dict()})
+                self._log_request("POST", payload, 200, started)
+                return
             if self.path == "/chats/save":
                 chat = Chat.model_validate(payload["chat"])
                 self.chat_store.save(chat)
                 self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
+                self._log_request("POST", payload, 200, started)
+                return
+            if self.path.startswith("/chats/") and self.path.endswith("/title"):
+                chat_id = self.path[len("/chats/"):-len("/title")].strip("/")
+                if not chat_id:
+                    raise ValueError("Missing chat id in path")
+                prompt = _require_str(payload, "prompt")
+                model_name = payload.get("model")
+                title = self._generate_chat_title(
+                    prompt,
+                    model_name if isinstance(model_name, str) else None,
+                )
+                patched = self.chat_store.update_meta(chat_id, title=title)
+                self._send_json({
+                    "title": title,
+                    "chat": patched.model_dump(mode="json", exclude_none=True),
+                })
                 self._log_request("POST", payload, 200, started)
                 return
             if self.path == "/inference/chat":
@@ -215,12 +398,38 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 if "chat" not in payload:
                     raise ValueError("Missing 'chat' field")
                 chat = Chat.model_validate(payload["chat"])
+                if "mode" in payload and isinstance(payload["mode"], str):
+                    chat = chat.model_copy(
+                        update={"meta": {**chat.meta, "mode": payload["mode"]}}
+                    )
                 task = payload.get("task", "general")
                 workspace = payload.get("workspace")
-                agent = self.agent
-                if workspace:
-                    agent = AgentCore.from_workspace(Path(str(workspace)))
+                # Empty/missing workspace: use ~/CodeAgents (created on demand).
+                # We avoid $HOME because the agent would then wander into
+                # ~/Documents / ~/Desktop / ~/Downloads, which are TCC-protected
+                # on macOS and trigger a wall of permission prompts.
+                if not workspace:
+                    default_ws = Path.home() / "CodeAgents"
+                    default_ws.mkdir(parents=True, exist_ok=True)
+                    workspace = str(default_ws)
+                agent = AgentCore.from_workspace(Path(str(workspace)))
                 self._stream_ndjson(agent, chat, str(task))
+                self._log_request("POST", payload, 200, started)
+                return
+            if self.path == "/chat/upload":
+                filename = _require_str(payload, "filename")
+                raw_b64 = payload.get("content_base64")
+                if not isinstance(raw_b64, str):
+                    raise ValueError("content_base64 must be a string")
+                sub = str(payload.get("subdir", "uploads"))
+                ws = self.agent.workspace.root
+                out = save_chat_base64_upload(
+                    ws,
+                    filename=filename,
+                    content_base64=raw_b64,
+                    subdir=sub,
+                )
+                self._send_json(out)
                 self._log_request("POST", payload, 200, started)
                 return
             if self.path == "/chat/confirm":
@@ -307,6 +516,116 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             self._log_request("POST", payload, 400, started, error=str(exc))
 
+    def do_PATCH(self) -> None:
+        started = time.perf_counter()
+        payload: dict[str, Any] = {}
+        try:
+            payload = self._read_json()
+            if self.path.startswith("/chats/"):
+                chat_id = self.path.removeprefix("/chats/").strip("/")
+                if not chat_id:
+                    raise ValueError("Missing chat id in path")
+                title = payload.get("title")
+                meta = payload.get("meta")
+                if title is not None and not isinstance(title, str):
+                    raise ValueError("title must be a string")
+                if meta is not None and not isinstance(meta, dict):
+                    raise ValueError("meta must be an object")
+                chat = self.chat_store.update_meta(
+                    chat_id,
+                    title=title if isinstance(title, str) else None,
+                    meta=meta if isinstance(meta, dict) else None,
+                )
+                self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
+                self._log_request("PATCH", payload, 200, started)
+                return
+            self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            self._log_request("PATCH", payload, 404, started, error="not_found")
+        except FileNotFoundError as exc:
+            self._send_json({"error": str(exc) or "chat_not_found"}, status=HTTPStatus.NOT_FOUND)
+            self._log_request("PATCH", payload, 404, started, error=str(exc))
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            self._log_request("PATCH", payload, 400, started, error=str(exc))
+
+    def do_DELETE(self) -> None:
+        started = time.perf_counter()
+        try:
+            if self.path.startswith("/plans/"):
+                plan_id = self.path.removeprefix("/plans/").strip("/")
+                if not plan_id:
+                    raise ValueError("Missing plan id in path")
+                removed = self.plan_store.delete(plan_id)
+                if not removed:
+                    self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    self._log_request("DELETE", {}, 404, started, error="plan_not_found")
+                    return
+                self._send_json({"deleted": plan_id})
+                self._log_request("DELETE", {}, 200, started)
+                return
+            if self.path.startswith("/chats/"):
+                chat_id = self.path.removeprefix("/chats/").strip("/")
+                if not chat_id:
+                    raise ValueError("Missing chat id in path")
+                removed = self.chat_store.delete(chat_id)
+                if not removed:
+                    self._send_json({"error": "chat_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    self._log_request("DELETE", {}, 404, started, error="chat_not_found")
+                    return
+                self._send_json({"deleted": chat_id})
+                self._log_request("DELETE", {}, 200, started)
+                return
+            self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            self._log_request("DELETE", {}, 404, started, error="not_found")
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            self._log_request("DELETE", {}, 400, started, error=str(exc))
+
+    def _generate_chat_title(self, prompt: str, model_name: str | None = None) -> str:
+        """Ask the chat's active model for a short 3-5 word title.
+
+        Bypasses the agent's tool-loop and turns reasoning off via
+        ``reasoning_effort=none`` (Ollama OpenAI-compat) so naming stays
+        cheap even on thinking models. If the call fails, falls back to a
+        truncated version of the user prompt so the GUI never blocks.
+        """
+        from codeagents.schemas import (
+            Chat as _Chat,
+            SystemMessage,
+            TextContent,
+            UserMessage,
+        )
+
+        system_text = (
+            "You generate ultra-short chat titles. "
+            "Reply with a single line of 3 to 5 words in the user's language. "
+            "No quotes, no trailing punctuation, no markdown. Title-case it. "
+            "Do not think out loud; output only the title."
+        )
+        user_text = prompt.strip()[:500]
+        title_chat = _Chat(
+            messages=[
+                SystemMessage(index=0, content=[TextContent(text=system_text)]),
+                UserMessage(index=1, content=[TextContent(text=user_text)]),
+            ],
+            meta={"task": "general", "mode": "ask"},
+        )
+        answer = ""
+        try:
+            # Resolve to the model the GUI is currently using; ``for_task``
+            # transparently builds an ad-hoc profile for any installed
+            # Ollama model name passed as ``task``.
+            profile = self.agent.router.for_task(model_name or "general")
+            answer = self.agent.runtime.chat(
+                model=profile,
+                chat=title_chat,
+                reasoning_effort="none",
+            )
+        except Exception:
+            answer = ""
+        title = _normalize_title(answer) or _normalize_title(user_text) or "New chat"
+        return title
+
     def log_message(self, format: str, *args: Any) -> None:
         # Keep stdout useful for API responses and explicit logs.
         return
@@ -349,8 +668,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
         try:
             for event in agent.complete_chat_stream(chat, task=task):
-                events.append(event)
-                line = json.dumps(event, ensure_ascii=False) + "\n"
+                row = stream_event_to_json(event)
+                events.append(row)
+                line = json.dumps(row, ensure_ascii=False) + "\n"
                 try:
                     self.wfile.write(line.encode("utf-8"))
                     self.wfile.flush()
@@ -360,13 +680,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     _try_persist()
                     return
 
-                etype = event.get("type")
+                etype = row.get("type")
                 now = _time.monotonic()
                 if etype in BOUNDARY_TYPES or (now - last_flush) >= CHAT_FLUSH_INTERVAL:
                     _try_persist()
                     last_flush = now
         except Exception as exc:
-            err = json.dumps({"type": "error", "message": str(exc)}) + "\n"
+            err = json.dumps(
+                stream_event_to_json(StreamErrorEvent(message=str(exc))),
+                ensure_ascii=False,
+            ) + "\n"
             try:
                 self.wfile.write(err.encode("utf-8"))
                 self.wfile.flush()
@@ -504,7 +827,13 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def serve(*, host: str, port: int, workspace: Path) -> None:
+def serve(
+    *,
+    host: str,
+    port: int,
+    workspace: Path,
+    gui_dir: Path | None = None,
+) -> None:
     agent = AgentCore.from_workspace(workspace)
 
     class Handler(AgentRequestHandler):
@@ -512,8 +841,24 @@ def serve(*, host: str, port: int, workspace: Path) -> None:
 
     Handler.agent = agent
     Handler.model_service = LocalModelService()
-    Handler.chat_store = ChatStore(agent.workspace.root)
+    # Single global library — shared between TUI / GUI / SDK regardless of
+    # the agent's workspace. Override via ``CODEAGENTS_CHATS_DIR`` env var.
+    Handler.chat_store = ChatStore.global_default()
+    Handler.plan_store = PlanStore.global_default()
     Handler.request_logger = ServiceRequestLogger()
+    Handler.allowed_cors_origins = cors_origins_from_env()
+    gui_path: Path | None = gui_dir
+    if gui_path is None and os.environ.get("CODEAGENTS_GUI_DIR"):
+        gui_path = Path(os.environ["CODEAGENTS_GUI_DIR"])
+    if gui_path is not None:
+        gui_path = gui_path.expanduser().resolve()
+        if not gui_path.is_dir():
+            print(f"Warning: --gui-dir is not a directory, ignoring: {gui_path}")
+            gui_path = None
+        elif not (gui_path / "index.html").is_file():
+            print(f"Warning: no index.html in GUI dir, ignoring: {gui_path}")
+            gui_path = None
+    Handler.gui_static_dir = gui_path
 
     try:
         from codeagents.model_params import ensure_for_models, PARAMS_DIR
@@ -531,6 +876,8 @@ def serve(*, host: str, port: int, workspace: Path) -> None:
     server = ReusableThreadingHTTPServer((host, port), Handler)
     print(f"CodeAgents API listening on http://{host}:{port}")
     print(f"Workspace: {agent.workspace.root}")
+    if gui_path is not None:
+        print(f"Web UI: http://{host}:{port}/ui/")
 
     def stop(signum: int, _frame: Any) -> None:
         print(f"\nReceived signal {signum}; shutting down CodeAgents API...")
@@ -552,3 +899,23 @@ def _require_str(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"Missing required string field: {key}")
     return value
+
+
+def _normalize_title(raw: str) -> str:
+    """Normalize a model-produced chat title: first non-empty line, max 5 words."""
+    if not raw:
+        return ""
+    line = ""
+    for candidate in raw.splitlines():
+        candidate = candidate.strip().strip("\"'`*_#-").strip()
+        if candidate:
+            line = candidate
+            break
+    if not line:
+        return ""
+    while line and line[-1] in ".,;:!?…":
+        line = line[:-1].rstrip()
+    words = line.split()
+    if len(words) > 5:
+        words = words[:5]
+    return " ".join(words)

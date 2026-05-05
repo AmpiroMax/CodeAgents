@@ -68,6 +68,12 @@ def main() -> None:
     serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host.")
     serve_parser.add_argument("--port", type=int, default=8765, help="Bind port.")
     serve_parser.add_argument("--workspace", default=".", help="Workspace root.")
+    serve_parser.add_argument(
+        "--gui-dir",
+        default=None,
+        type=Path,
+        help="Optional directory with built web UI (index.html + assets) served at /ui/.",
+    )
 
     infer_parser = subparsers.add_parser("infer", help="Run one structured inference request.")
     infer_parser.add_argument("request", help="JSON request or path to request JSON.")
@@ -136,7 +142,12 @@ def main() -> None:
     elif args.command == "code":
         ask_code(args.prompt, workspace=Path(args.workspace), fast=args.fast)
     elif args.command == "serve":
-        serve(host=args.host, port=args.port, workspace=Path(args.workspace))
+        serve(
+            host=args.host,
+            port=args.port,
+            workspace=Path(args.workspace),
+            gui_dir=args.gui_dir,
+        )
     elif args.command == "infer":
         infer(args.request)
     elif args.command == "infer-batch":

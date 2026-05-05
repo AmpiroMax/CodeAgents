@@ -1,0 +1,1436 @@
+:root {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-elevated: #0a0a0a;
+  --surface: #181818;
+  --surface-2: #1f1f1f;
+  --border: #2a2a2a;
+  --border-subtle: #1c1c1c;
+  --text: #e7e9ed;
+  --text-muted: #8b93a3;
+  --text-dim: #687080;
+  --accent: #c8a8ff;
+  --accent-2: #83d6c5;
+  --danger: #ff8f8f;
+  --warn: #f4c76b;
+  --success: #98df8a;
+  --code-bg: #0d0d0d;
+  --radius: 10px;
+  --mono: "Geist Mono", "SFMono-Regular", "Cascadia Code", "JetBrains Mono",
+    Menlo, Monaco, Consolas, monospace;
+  /* Mono everywhere — opencode-style. Even prose uses the mono font so every
+     character lines up to the same column width. The dedicated --mono var is
+     kept for situations where we want to be explicit (code blocks, status
+     bar) but body text and chat content all resolve to it too. */
+  --sans: "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --mode-bar-width: 3px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f6f3;
+  --bg-elevated: #ffffff;
+  --surface: #fafaf7;
+  --surface-2: #f0f0ea;
+  --border: #d8d8cf;
+  --border-subtle: #e6e6df;
+  --text: #1f2328;
+  --text-muted: #69707d;
+  --text-dim: #858c98;
+  --accent: #6f42c1;
+  --accent-2: #0f766e;
+  --danger: #c73535;
+  --warn: #8a5a00;
+  --success: #207227;
+  --code-bg: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.desktop-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  background: var(--bg);
+}
+
+.session-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: rgba(16, 19, 24, 0.92);
+}
+
+.sidebar-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.brand-title {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.brand-subtitle,
+.session-meta,
+.empty-sidebar,
+.composer-hint,
+.tool-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sidebar-controls {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-controls label,
+.session-header label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sidebar-controls input,
+.session-header select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.sidebar-actions,
+.dialog-actions,
+.tool-actions,
+.composer-tools,
+.session-header-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.api-pill {
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid rgba(152, 223, 138, 0.3);
+  border-radius: 999px;
+  color: var(--success);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.api-pill.error,
+.composer-error,
+.notice-error {
+  color: var(--danger);
+}
+
+.sidebar-section-title {
+  padding: 12px 14px 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.session-list {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 8px 12px;
+}
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  margin: 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.session-row:hover,
+.session-row.active {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.session-row-open {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-row-delete {
+  width: 28px;
+  border: 0;
+  border-left: 1px solid transparent;
+  border-radius: 0 8px 8px 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.session-row:hover .session-row-delete,
+.session-row-delete:focus-visible {
+  opacity: 1;
+}
+
+.session-row-delete:hover {
+  color: var(--danger);
+}
+
+.session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-sidebar {
+  padding: 12px;
+}
+
+.session-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Visible drag strip. We render a slim band slightly lighter than the
+   black background so the user can clearly see where to grab the window.
+   Left padding keeps the band from sitting under the traffic-lights. */
+.titlebar {
+  height: 28px;
+  -webkit-app-region: drag;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  /* macOS WKWebView: -webkit-app-region: drag is read by the AppKit shell
+     so the user can drag the window from this header. The big left padding
+     (88px) leaves room for the close/minimize/zoom traffic-light buttons. */
+  -webkit-app-region: drag;
+  padding: 8px 18px 8px 18px;
+  min-height: 36px;
+  background: var(--bg);
+}
+
+[data-theme="light"] .session-header {
+  background: var(--bg);
+}
+
+.session-header-controls {
+  -webkit-app-region: no-drag;
+}
+
+.session-header button,
+.session-header [data-app-region="no-drag"] {
+  -webkit-app-region: no-drag;
+}
+
+.dialog-eyebrow {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-title-block h1 {
+  max-width: 52vw;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.session-header-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.session-workspace {
+  position: relative; /* anchor for the floating .plan-banner column */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding: 18px 18px 24px;
+  /* No smooth-scroll: the JS pin re-writes scrollTop multiple times per
+     stream tick and smooth animation makes the message visibly slide. */
+  scroll-behavior: auto;
+}
+
+/* Sized imperatively in ChatTimeline.tsx — see ``sizeTail``. */
+.timeline-tail {
+  flex: 0 0 auto;
+  width: 100%;
+  pointer-events: none;
+}
+
+.empty-timeline {
+  max-width: 640px;
+  margin: 10vh auto 0;
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-title {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.tool-card,
+.notice-row,
+.terminal-inline {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+[data-theme="light"] .tool-card,
+[data-theme="light"] .notice-row,
+[data-theme="light"] .terminal-inline {
+  background: var(--surface);
+}
+
+/* Messages are intentionally chrome-less: no bubbles, no role labels.
+   They span the full timeline width so reading prose isn't visually clipped
+   to a narrow column. The mode-coloured left bar on user messages does the
+   role distinction. */
+.timeline-message {
+  width: 100%;
+  padding: 8px 0;
+}
+
+/* User messages get an accent left bar driven by ``data-mode`` (the mode the
+   message was sent in). The bar mimics the ``.thinking-block`` style so the
+   timeline reads as a vertical conversation rail. No global tint — only the
+   bar colour shifts with mode, and only on the message it belongs to. */
+.timeline-message-user {
+  padding: 10px 14px 10px 14px;
+  border-left: var(--mode-bar-width) solid var(--border);
+  background: var(--surface);
+  border-radius: 0;
+}
+
+.timeline-message-user[data-mode="agent"] {
+  border-left-color: #4ea1ff;
+}
+.timeline-message-user[data-mode="ask"] {
+  border-left-color: #66d685;
+}
+.timeline-message-user[data-mode="plan"] {
+  border-left-color: #ff9b3d;
+}
+
+.timeline-message-assistant {
+  border: 0;
+  background: transparent;
+}
+
+.timeline-message.live {
+  opacity: 0.92;
+}
+
+.message-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
+/* Markdown rendering for assistant + thinking content. Goal: feels like
+   prose, code-blocks integrate with the surrounding flat surface, no extra
+   margins on the first/last block so messages line up tightly. */
+.md {
+  line-height: 1.55;
+  word-wrap: break-word;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md pre,
+.md table {
+  margin: 0.5em 0;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.5em;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.md h1 {
+  font-size: 1.4em;
+}
+.md h2 {
+  font-size: 1.2em;
+}
+.md h3 {
+  font-size: 1.05em;
+}
+.md h4 {
+  font-size: 1em;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.md pre {
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 0.92em;
+  line-height: 1.45;
+}
+
+.md pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 1em;
+}
+
+.md blockquote {
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
+}
+
+.md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.md th,
+.md td {
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.thinking-block {
+  width: 100%;
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.thinking-block div {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
+.message-attachments,
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message-attachments span,
+.composer-attachments span {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+
+.tool-card {
+  padding: 10px 12px;
+  font-family: var(--mono);
+}
+
+.tool-tree {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tree-glyph {
+  color: var(--text-dim);
+}
+
+.tool-input,
+.tool-output,
+.terminal-inline pre,
+.diff-card pre,
+.permission-dialog pre,
+.terminal-body {
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tool-output {
+  max-height: 240px;
+  color: var(--text-muted);
+}
+
+.tool-warning {
+  margin-top: 8px;
+  color: var(--warn);
+  font-family: var(--sans);
+}
+
+.tool-actions {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.tool-actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.diff-card {
+  margin-top: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: rgba(8, 10, 13, 0.44);
+}
+
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.diff-card pre {
+  max-height: 260px;
+  margin: 0;
+  border: 0;
+}
+
+.diff-add {
+  color: var(--success);
+}
+
+.diff-del {
+  color: var(--danger);
+}
+
+.diff-meta {
+  color: var(--text-dim);
+}
+
+.notice-row,
+.terminal-inline {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.terminal-inline {
+  display: block;
+}
+
+.terminal-inline span {
+  color: var(--text-dim);
+}
+
+.terminal-panel {
+  position: relative;
+  min-height: 36px;
+  border-top: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.terminal-panel.collapsed {
+  overflow: hidden;
+}
+
+.terminal-resize {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.terminal-body {
+  height: calc(100% - 36px);
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-muted);
+}
+
+.composer-shell {
+  display: grid;
+  gap: 8px;
+  padding: 10px 18px 14px;
+  background: var(--bg);
+}
+
+[data-theme="light"] .composer-shell {
+  background: var(--bg);
+}
+
+.composer-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px 12px 10px calc(12px + var(--mode-bar-width));
+  border: 1px solid var(--border);
+  border-left: var(--mode-bar-width) solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+/* Per-mode left bar (mirrors the user-message bar). The rest of the border
+   stays neutral so the colour doesn't flash across the whole composer. */
+.composer-box[data-mode="agent"] {
+  border-left-color: #4ea1ff;
+}
+.composer-box[data-mode="ask"] {
+  border-left-color: #66d685;
+}
+.composer-box[data-mode="plan"] {
+  border-left-color: #ff9b3d;
+}
+
+.composer-box textarea {
+  min-height: 62px;
+  max-height: 220px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+/* Dimmer placeholder. The placeholder text is per-mode and serves as a
+   subtle hint, so it should stay clearly subordinate to user-typed text. */
+.composer-box textarea::placeholder {
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+
+.attach-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.attach-button:hover {
+  border-color: var(--mode-accent, var(--accent));
+  color: var(--text);
+}
+
+.composer-hint {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.ca-button {
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ca-button:hover {
+  border-color: var(--accent);
+}
+
+.ca-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ca-button-primary {
+  border-color: rgba(200, 168, 255, 0.45);
+  background: rgba(200, 168, 255, 0.16);
+}
+
+.ca-button-danger {
+  border-color: rgba(255, 143, 143, 0.35);
+  color: var(--danger);
+}
+
+.ca-button-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ca-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.ca-tabs button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ca-tabs button.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.ca-kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.status-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.status-icon-running {
+  color: var(--accent);
+  animation: pulse 1s linear infinite;
+}
+
+.status-icon-done {
+  color: var(--success);
+}
+
+.status-icon-error {
+  color: var(--danger);
+}
+
+.status-icon-pending {
+  color: var(--warn);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.56);
+}
+
+.permission-dialog {
+  width: min(560px, 100%);
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+}
+
+.permission-dialog h2 {
+  margin: 4px 0 8px;
+}
+
+.permission-dialog p {
+  color: var(--text-muted);
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.composer-hint {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mode-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.status-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 18px 8px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 14px;
+}
+
+.status-bar-left {
+  flex: 1;
+  min-width: 0;
+}
+
+/* OpenCode-style: a row of small squares that "breathe" — each pulses its
+   size and opacity with a staggered delay. The whole row alternates
+   direction via ``alternate`` so it doesn't look like a one-way runner. */
+.status-progress {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 10px;
+}
+
+.status-progress .dot {
+  width: 6px;
+  height: 6px;
+  background: var(--mode-accent, var(--accent));
+  border-radius: 1px;
+  opacity: 0.35;
+  animation: status-dot 1.2s ease-in-out infinite alternate;
+}
+
+.status-progress .dot-1 { animation-delay: 0s; }
+.status-progress .dot-2 { animation-delay: 0.12s; }
+.status-progress .dot-3 { animation-delay: 0.24s; }
+.status-progress .dot-4 { animation-delay: 0.36s; }
+.status-progress .dot-5 { animation-delay: 0.48s; }
+
+@keyframes status-dot {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.7);
+    opacity: 0.4;
+  }
+}
+
+.status-context.warn {
+  color: var(--warn);
+}
+
+.status-model,
+.status-dot {
+  color: var(--text-muted);
+}
+
+.status-dot.off {
+  color: var(--danger);
+}
+
+.tool-name {
+  font-family: var(--mono);
+}
+
+.tool-summary {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-details {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tool-details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  align-items: flex-start;
+  justify-items: center;
+  padding: 12vh 16px;
+  background: rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(2px);
+}
+
+.palette {
+  width: min(560px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.palette-breadcrumb {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.palette-back {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.palette-arrow {
+  color: var(--text-dim);
+}
+
+.palette-secondary {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.palette-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.palette-list {
+  max-height: 50vh;
+  overflow: auto;
+  padding: 6px;
+  margin: 0;
+  list-style: none;
+}
+
+.palette-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.palette-item.active {
+  background: var(--surface-2);
+}
+
+.palette-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-hint {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.palette-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Shutdown overlay — covers the whole window while the Swift launcher
+   stops background services. Opaque-ish so the chat content doesn't
+   distract from the "we're closing" message. */
+.shutdown-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+}
+
+.shutdown-card {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  padding: 22px 28px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.shutdown-label {
+  color: var(--text-muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+/* ===== Plan banner / viewer ===== */
+
+/* Right-side floating column. Lives inside .session-workspace (which is
+   position: relative), sits on top of every chat element including tool
+   cards (z-index above .tool-card / .timeline content), and is fully
+   pointer-event-aware so hover / click reach the buttons.
+
+   Cards themselves are translucent so the chat behind them stays readable. */
+.plan-banner {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 220px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border-left: var(--mode-bar-width) solid #ff9b3d;
+  background: rgba(255, 155, 61, 0.10);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: background 120ms ease;
+}
+
+.plan-card:hover,
+.plan-card:focus-within {
+  background: rgba(255, 155, 61, 0.18);
+}
+
+.plan-card[data-status="completed"] {
+  border-left-color: #66d685;
+  background: rgba(102, 214, 133, 0.06);
+}
+.plan-card[data-status="rejected"] {
+  border-left-color: #555;
+  background: rgba(120, 120, 120, 0.05);
+}
+
+.plan-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px 4px 10px;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.plan-card-body:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.plan-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.3;
+  /* Allow up to two lines so users can read the plan name without
+     hovering. Beyond that we still ellipsise. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.plan-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Action row sits *below* the title (column layout). The Build/Continue
+   button stretches across, with the step counter ("done/total") inlined
+   to the LEFT of the action label per the user's "число шагов перед
+   словом Build" requirement. The dismiss × hugs the right edge. */
+.plan-card-actions {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.plan-build-btn {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  background: rgba(255, 155, 61, 0.18);
+  color: #ffb066;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.plan-build-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.plan-build-label {
+  font-weight: 600;
+}
+.plan-card[data-status="completed"] .plan-build-btn {
+  background: rgba(102, 214, 133, 0.16);
+  color: #8be0a4;
+}
+.plan-build-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.plan-build-btn:hover:not(:disabled) {
+  background: rgba(255, 155, 61, 0.28);
+}
+
+.plan-dismiss-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-left: 1px solid var(--border-subtle);
+}
+.plan-dismiss-btn:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.08);
+}
+
+/* Plan viewer overlay — read-only md preview, Esc closes. */
+.plan-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.7);
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.plan-viewer {
+  width: min(820px, 100%);
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid #ff9b3d;
+  font-family: var(--mono);
+}
+
+.plan-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.plan-viewer-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.plan-viewer-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.plan-viewer-close {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.plan-viewer-body {
+  overflow-y: auto;
+  padding: 16px 20px 24px 20px;
+}
+
+.plan-viewer-error {
+  color: #ff6b6b;
+  white-space: pre-wrap;
+}
+
+.plan-viewer-loading {
+  color: var(--text-muted);
+}
+
+/* Per-mode accent. ``--mode-accent`` is consumed by the progress dots and
+   the MODE badge. Colours match opencode's mode palette: agent=blue,
+   plan=orange, ask=green. The user-message and composer left-bars below
+   reuse the same hex codes literally so the three are kept in sync. */
+.desktop-shell[data-mode="agent"] {
+  --mode-accent: #4ea1ff;
+  --mode-soft: rgba(78, 161, 255, 0.14);
+  --mode-strong: rgba(78, 161, 255, 0.45);
+}
+
+.desktop-shell[data-mode="ask"] {
+  --mode-accent: #66d685;
+  --mode-soft: rgba(102, 214, 133, 0.14);
+  --mode-strong: rgba(102, 214, 133, 0.45);
+}
+
+.desktop-shell[data-mode="plan"] {
+  --mode-accent: #ff9b3d;
+  --mode-soft: rgba(255, 155, 61, 0.14);
+  --mode-strong: rgba(255, 155, 61, 0.45);
+}
+
+/* Composer keeps a neutral border; only the left mode-bar shifts colour when
+   the user presses Tab. We don't tint the focus state any further to avoid
+   competing with the mode bar. */
+.desktop-shell[data-mode] .mode-badge {
+  color: var(--mode-accent);
+  border-color: var(--mode-strong);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .session-header {
+    padding-left: 88px;
+    padding-right: 14px;
+  }
+
+  .composer-shell,
+  .status-bar {
+    padding-inline: 14px;
+  }
+
+  .timeline {
+    padding-inline: 14px;
+  }
+}

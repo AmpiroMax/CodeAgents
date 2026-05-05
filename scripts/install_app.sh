@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="CodeAgents Services"
+APP_NAME="CodeAgents"
 INSTALL_DIR="${CODEAGENTS_APP_INSTALL_DIR:-/Applications}"
 APP_BUNDLE="$INSTALL_DIR/$APP_NAME.app"
 INSTALL_ROOT="${CODEAGENTS_APP_ROOT:-$ROOT_DIR}"
@@ -17,15 +17,23 @@ fi
 .venv/bin/python -m pip install -e . >/dev/null
 cargo build --release -p codeagents-terminal --bin ca-services
 
+(
+  cd "$ROOT_DIR/gui"
+  npm install >/dev/null
+  npm run build
+)
+
 rm -rf "$APP_BUNDLE" "$BUILD_DIR"
-mkdir -p "$BUILD_DIR" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+mkdir -p "$BUILD_DIR" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/gui"
 
 cp "$ROOT_DIR/target/release/ca-services" "$APP_BUNDLE/Contents/Resources/ca-services"
+cp -R "$ROOT_DIR/gui/dist/"* "$APP_BUNDLE/Contents/Resources/gui/"
 
 swiftc \
-  "$ROOT_DIR/scripts/macos/CodeAgentsServicesApp.swift" \
-  -o "$APP_BUNDLE/Contents/MacOS/CodeAgentsServices" \
-  -framework Cocoa
+  "$ROOT_DIR/scripts/macos/CodeAgentsApp.swift" \
+  -o "$APP_BUNDLE/Contents/MacOS/CodeAgents" \
+  -framework Cocoa \
+  -framework WebKit
 
 ICON_PNG="$BUILD_DIR/icon.png"
 ICONSET_DIR="$BUILD_DIR/AppIcon.iconset"
@@ -64,13 +72,13 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
-  <string>local.codeagents.services</string>
+  <string>local.codeagents.app</string>
   <key>CFBundleVersion</key>
   <string>0.1.0</string>
   <key>CFBundleShortVersionString</key>
   <string>0.1.0</string>
   <key>CFBundleExecutable</key>
-  <string>CodeAgentsServices</string>
+  <string>CodeAgents</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleIconFile</key>
@@ -79,22 +87,43 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <!-- Pre-fill the prompt strings so the user understands why CodeAgents
+       wants access. Without these macOS shows a generic "wants to access X"
+       dialog and most users deny by reflex. -->
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>CodeAgents reads files from your Documents folder only when you ask the agent to work there.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>CodeAgents opens files from Downloads only when you attach them to a chat.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>CodeAgents reads files from the Desktop only when you ask the agent to work there.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>CodeAgents needs Apple Events to start and stop its local services.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>CodeAgents talks to its local API and Ollama on 127.0.0.1.</string>
   <key>CodeAgentsRoot</key>
   <string>$INSTALL_ROOT</string>
 </dict>
 </plist>
 EOF
 
+# Strip quarantine and apply an ad-hoc code signature. The signature gives
+# the bundle a stable TCC identity so reinstalls don't lose previously
+# granted permissions and don't re-trigger the entire prompt chain.
 xattr -dr com.apple.quarantine "$APP_BUNDLE" 2>/dev/null || true
+codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "$APP_BUNDLE"
 
 cat <<EOF
-Installed: $APP_BUNDLE
+Установлено: $APP_BUNDLE
 
-Launch options:
-  - Spotlight (Cmd+Space): "CodeAgents Services"
-  - Launchpad: search "CodeAgents Services"
-  - Terminal: open -a "$APP_NAME"
+Запуск:
+  - Spotlight: «CodeAgents»
+  - Finder → Программы → CodeAgents
+  - Терминал: open -a CodeAgents
 
-Closing the app stops Ollama and the CodeAgents API.
+Приложение само поднимает Ollama и HTTP API; чат открывается на http://127.0.0.1:8765/ui/.
+Workspace по умолчанию — ~/CodeAgents (создаётся автоматически), чтобы избежать
+системных промптов про Documents/Desktop/Downloads. Сменить можно через меню
+Services → «Pin workspace folder…».
+Закрытие окна останавливает сервисы.
 EOF

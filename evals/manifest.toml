@@ -1,0 +1,19 @@
+# Benchmark datasets for search / RAG / agent evaluation (placeholders).
+# Use scripts/download_benchmarks.sh after filling in URLs or HuggingFace IDs.
+
+[benchmarks.ms_marco_tiny]
+description = "Small MS MARCO slice for retrieval smoke tests"
+# source = "https://..."
+local_dir = "evals/data/ms_marco_tiny"
+
+[benchmarks.beir_nfcorpus_tiny]
+description = "BEIR NFCorpus subset for sparse/dense retrieval"
+local_dir = "evals/data/beir_nfcorpus_tiny"
+
+[benchmarks.swe_smoke]
+description = "Tiny SWE-style tasks for tool-use regression"
+local_dir = "evals/data/swe_smoke"
+
+[benchmarks.code_search_mini]
+description = "Mini repo-level code search questions"
+local_dir = "evals/data/code_search_mini"

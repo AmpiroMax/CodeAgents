@@ -86,3 +86,31 @@ Use native tools for:
 - Operations where Rust/Python implementation is simpler than running a separate MCP server.
 
 The stable internal abstraction is `ToolSpec`; MCP tools are adapted into that abstraction.
+
+## Typed streaming and chat metadata
+
+- NDJSON events are modeled in Python by [`src/codeagents/stream_events.py`](../src/codeagents/stream_events.py) (`AgentStreamEvent` union). The HTTP layer serializes with `stream_event_to_json` before writing each line.
+- [`ChatMeta`](../src/codeagents/schemas.py) describes structured `Chat.meta` fields (`mode`: `plan` | `agent` | `ask`, LSP folders, terminal session stubs). Merging uses `merge_chat_meta`.
+- Session `mode` filters native tools by `Permission` (`ask` → read-only; `plan` → read-only + propose).
+
+## MCP client and CodeAgents MCP server
+
+- [`src/codeagents/mcp/bridge.py`](../src/codeagents/mcp/bridge.py) discovers enabled servers from `[mcp.*]` in `config/tools.toml`, runs `tools/list` over stdio, and registers each remote tool as `mcp.<server>.<tool>` with `mcp_input_schema` for OpenAI-style payloads. Set `CODEAGENTS_DISABLE_MCP=1` to skip.
+- [`src/codeagents/mcp_server.py`](../src/codeagents/mcp_server.py) exposes native workspace tools to external MCP clients (`codeagents-mcp` entry point). Workspace root: env `CODEAGENTS_WORKSPACE`.
+
+## LSP (optional)
+
+- [`config/lsp.toml`](../config/lsp.toml): enable a server under `[servers.*]` to register the native tool `lsp_query` (`document_symbols`, `workspace_symbol`). Implementation: [`src/codeagents/lsp/`](../src/codeagents/lsp/).
+
+## Platform hooks (indexing, documents, evals)
+
+- [`src/codeagents/platform/`](../src/codeagents/platform/): `CodeIndexBackend` (SQLite adapter), `DocumentExtractor` / `ExtractedDocument` placeholders for PDF/vision pipelines.
+- [`evals/manifest.toml`](../evals/manifest.toml) and [`scripts/download_benchmarks.sh`](../scripts/download_benchmarks.sh): benchmark download stub.
+
+## HTTP: attachments
+
+- `POST /chat/upload` — JSON `{ "filename", "content_base64", "subdir"?: "uploads" }` writes under `<workspace>/.codeagents/<subdir>/` for future multimodal chat attachments.
+
+## Web GUI (browser)
+
+- SPA in [`gui/`](../gui/): same HTTP + NDJSON contract as the Rust TUI. Served in production at **`/ui/`** when `codeagents serve --gui-dir …` is used (bundled inside **`CodeAgents.app`**). Architecture and CORS: [`docs/gui-architecture.md`](gui-architecture.md). Optional env: `CODEAGENTS_CORS_ORIGINS` (comma-separated); empty disables CORS reflection. Launcher: [`docs/services_manager.md`](services_manager.md).

@@ -1,0 +1,14 @@
+# Optional Language Server Protocol integration.
+# When a server has enabled = true, the native tool `lsp_query` is registered.
+#
+# Example (disabled by default):
+#
+# [servers.rust_analyzer]
+# enabled = false
+# command = "rust-analyzer"
+# args = []
+
+[servers.placeholder]
+enabled = false
+command = "rust-analyzer"
+args = []

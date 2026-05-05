@@ -32,8 +32,16 @@ class OpenAICompatibleRuntime:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.logger = RuntimeRequestLogger()
 
-    def chat(self, *, model: ModelProfile, chat: Chat) -> str:
-        return self.chat_with_metrics(model=model, chat=chat).content
+    def chat(
+        self,
+        *,
+        model: ModelProfile,
+        chat: Chat,
+        reasoning_effort: str | None = None,
+    ) -> str:
+        return self.chat_with_metrics(
+            model=model, chat=chat, reasoning_effort=reasoning_effort
+        ).content
 
     def chat_with_metrics(
         self,
@@ -42,6 +50,7 @@ class OpenAICompatibleRuntime:
         chat: Chat,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatResult:
         params = load_params(model.name, default_temperature=model.temperature)
         payload: dict[str, Any] = {
@@ -53,6 +62,10 @@ class OpenAICompatibleRuntime:
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if reasoning_effort:
+            # Ollama OpenAI-compat field for thinking models. Accepts
+            # "none" / "low" / "medium" / "high"; non-thinking models ignore it.
+            payload["reasoning_effort"] = reasoning_effort
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.config.base_url.rstrip('/')}/chat/completions",
@@ -143,6 +156,9 @@ class OpenAICompatibleRuntime:
             "model": model.name,
             "messages": messages,
             "stream": True,
+            # Ask the OpenAI-compatible endpoint to include a final usage block
+            # so we can surface real prompt/completion token counts to the GUI.
+            "stream_options": {"include_usage": True},
         }
         payload.update(params.openai_payload())
         if temperature is not None:
@@ -173,6 +189,7 @@ class OpenAICompatibleRuntime:
 
         accumulated_tool_calls: dict[int, dict[str, Any]] = {}
         full_content = ""
+        usage_block: dict[str, Any] | None = None
 
         try:
             for raw_line in response:
@@ -185,6 +202,10 @@ class OpenAICompatibleRuntime:
                     chunk = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
+                # Final chunk in streaming mode carries usage but no choices.
+                if isinstance(chunk.get("usage"), dict):
+                    usage_block = chunk["usage"]
 
                 choice = (chunk.get("choices") or [{}])[0]
                 delta = choice.get("delta", {})
@@ -254,6 +275,15 @@ class OpenAICompatibleRuntime:
                     elapsed_ms=elapsed * 1000,
                 )
             )
+
+        if usage_block is not None:
+            yield {
+                "type": "context_usage",
+                "prompt_tokens": int(usage_block.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(usage_block.get("completion_tokens", 0) or 0),
+                "total_tokens": int(usage_block.get("total_tokens", 0) or 0),
+                "context_window": int(getattr(params, "num_ctx", 0) or 0),
+            }
 
         yield {"type": "done"}
 

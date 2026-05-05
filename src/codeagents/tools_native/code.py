@@ -72,7 +72,11 @@ def register_code_tools(registry: ToolRegistry, workspace: Workspace) -> None:
             name="pwd",
             kind="native",
             permission=Permission.READ_ONLY,
-            description="Print the current workspace directory. Params: none.",
+            description=(
+                "Print the agent's current working directory and workspace trust boundary. "
+                "Returns cwd (where relative paths resolve), workspace_root (write boundary), "
+                "and read_only (true when cwd is outside workspace_root). Params: none."
+            ),
         ),
         handler=lambda args: pwd(workspace, args),
     )
@@ -155,9 +159,9 @@ def register_code_tools(registry: ToolRegistry, workspace: Workspace) -> None:
         ToolSpec(
             name="web_search",
             kind="native",
-            permission=Permission.NETWORK,
+            permission=Permission.READ_ONLY,
             description=(
-                "Search the web using cheap/free providers. "
+                "Search the web using cheap/free providers. Always available, no permission required. "
                 "Params: query (required), limit, provider=auto|searxng|jina|brave, language, time_range."
             ),
         ),
@@ -167,13 +171,213 @@ def register_code_tools(registry: ToolRegistry, workspace: Workspace) -> None:
         ToolSpec(
             name="docs_search",
             kind="native",
-            permission=Permission.NETWORK,
+            permission=Permission.READ_ONLY,
             description=(
                 "Search documentation-focused web results, optionally restricted to a domain. "
+                "Always available, no permission required. "
                 "Params: query (required), domain, limit, fetch_results."
             ),
         ),
         handler=lambda args: docs_search(workspace, args),
+    )
+    registry.register(
+        ToolSpec(
+            name="cd",
+            kind="native",
+            permission=Permission.READ_ONLY,
+            description=(
+                "Change the agent's current working directory. "
+                "Relative paths resolve against the current cwd; absolute paths and ~ are accepted. "
+                "The new cwd may live anywhere on disk, including OUTSIDE the workspace root. "
+                "Inside workspace_root: full permissions stay in effect. "
+                "Outside workspace_root: agent enters READ-ONLY mode — reads (read_file, cat, ls, grep, "
+                "head, tail, wc) work everywhere, but write/destructive tools refuse with "
+                "'path escapes workspace'. Subsequent shell tools run from the new cwd by default. "
+                "cd does not move the trust boundary — use change_workspace for that. "
+                "Returns: cwd, workspace_root, inside_workspace, read_only, notice. "
+                "Params: path (required, target directory)."
+            ),
+        ),
+        handler=lambda args: cd(workspace, args),
+    )
+    registry.register(
+        ToolSpec(
+            name="change_workspace",
+            kind="native",
+            permission=Permission.WORKSPACE_WRITE,
+            description=(
+                "Switch the workspace root (trust boundary) to a new directory and reset cwd to it. "
+                "Use this when the user wants the agent to start operating on a different project "
+                "as its primary working area; for temporary navigation prefer `cd`. "
+                "Behaviour: creates the target dir if missing along with a .codeagents/ skeleton; "
+                "resets cwd to the new root; re-binds per-workspace state (approvals, audit log, "
+                "confirmation history). Approvals from the previous workspace do NOT carry over — "
+                "the user may need to re-grant write/network permissions on the first relevant tool "
+                "call inside the new root. Requires user confirmation. "
+                "Returns: workspace_root, cwd, notice. "
+                "Params: path (required, absolute or ~-relative path to the new root)."
+            ),
+        ),
+        handler=lambda args: change_workspace(workspace, args),
+    )
+    # Plans subsystem — visible in every mode (READ_ONLY) so the agent can
+    # both author plans (in plan mode) and execute them (in agent mode).
+    # NOTE: plan tools declare a full mcp_input_schema (not the simple TOML
+    # ParamSpec used by older tools) because their args nest objects/arrays.
+    # Without this, AgentCore._invalid_tool_arguments derives the allowed set
+    # from spec.params (empty here) and rejects every call as "extra args".
+    _plan_step_schema = {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Short verb-led step title (≤ 8 words).",
+            },
+            "detail": {
+                "type": "string",
+                "description": "What to do, files involved, what 'done' looks like.",
+            },
+        },
+        "required": ["title", "detail"],
+        "additionalProperties": False,
+    }
+    registry.register(
+        ToolSpec(
+            name="create_plan",
+            kind="native",
+            permission=Permission.READ_ONLY,
+            description=(
+                "Create a structured execution plan and pin it to the chat banner. "
+                "Use this in plan mode after analysing the task. The plan stays available "
+                "until the user clicks Build (which triggers the agent to execute it step "
+                "by step) or rejects it. Plans are persisted to "
+                ".codeagents/plans/<id>.json and rendered as <id>.md for inspection. "
+                "Returns: plan id, status, total_steps, markdown preview. "
+                "Limit: max 3 active plans; reject one before creating a fourth."
+            ),
+            mcp_input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Plan title, ≤ 60 chars (e.g. 'Add SQLite audit log').",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": (
+                            "1–3 short paragraphs explaining context, key tradeoffs, "
+                            "and the final shape of the change. NO numbered list here."
+                        ),
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": (
+                            "Ordered list of {title, detail} objects (≥ 1 step)."
+                        ),
+                        "items": _plan_step_schema,
+                        "minItems": 1,
+                    },
+                },
+                "required": ["title", "summary", "steps"],
+                "additionalProperties": False,
+            },
+        ),
+        handler=lambda args: create_plan_tool(workspace, args),
+    )
+    registry.register(
+        ToolSpec(
+            name="patch_plan",
+            kind="native",
+            permission=Permission.READ_ONLY,
+            description=(
+                "Edit an existing plan: rename, rewrite the summary, or replace the step "
+                "list (preserving step status by title-match where possible). Use in plan "
+                "mode for revisions, or in agent mode mid-execution if the live work makes "
+                "the original plan stale. At least one of title / summary / steps must be set."
+            ),
+            mcp_input_schema={
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "string", "description": "Plan id to edit."},
+                    "title": {"type": "string", "description": "New plan title."},
+                    "summary": {"type": "string", "description": "New plan summary."},
+                    "steps": {
+                        "type": "array",
+                        "description": "Replacement step list; preserves status by title match.",
+                        "items": _plan_step_schema,
+                    },
+                },
+                "required": ["plan_id"],
+                "additionalProperties": False,
+            },
+        ),
+        handler=lambda args: patch_plan_tool(workspace, args),
+    )
+    registry.register(
+        ToolSpec(
+            name="mark_step",
+            kind="native",
+            permission=Permission.READ_ONLY,
+            description=(
+                "Update the status of a single plan step. The agent MUST call this when "
+                "executing a plan: set status='in_progress' before starting a step, then "
+                "'done' (or 'skipped' with a note) after finishing it. The plan banner in "
+                "the GUI updates live from these calls; if every step ends up done/skipped, "
+                "the plan is auto-marked as completed."
+            ),
+            mcp_input_schema={
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "string", "description": "Plan id."},
+                    "step_n": {
+                        "type": "integer",
+                        "description": "1-based step index.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "done", "skipped"],
+                        "description": "New step status.",
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Optional short freeform note shown under the step.",
+                    },
+                },
+                "required": ["plan_id", "step_n", "status"],
+                "additionalProperties": False,
+            },
+        ),
+        handler=lambda args: mark_step_tool(workspace, args),
+    )
+    registry.register(
+        ToolSpec(
+            name="list_plans",
+            kind="native",
+            permission=Permission.READ_ONLY,
+            description=(
+                "List all plans (active, completed, rejected) with id/title/status/done "
+                "step count. Use to discover what plan_id to patch / mark / reference."
+            ),
+            mcp_input_schema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "active",
+                            "draft",
+                            "building",
+                            "completed",
+                            "rejected",
+                            "all",
+                        ],
+                        "description": "Optional status filter (default 'all').",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        handler=lambda args: list_plans_tool(workspace, args),
     )
     registry.register(
         ToolSpec(
@@ -458,17 +662,20 @@ def register_code_tools(registry: ToolRegistry, workspace: Workspace) -> None:
         ),
         handler=lambda args: run_tests(workspace, args),
     )
+    from codeagents.lsp.integration import register_lsp_tools_optional
+
+    register_lsp_tools_optional(registry, workspace)
 
 
 # ── Tool implementations ──────────────────────────────────────────────
 
 
 def read_file(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
-    path = workspace.resolve_inside(_require_str(args, "path"))
+    path = workspace.resolve_for_read(_require_str(args, "path"))
     if not path.exists():
-        return {"error": f"File not found: {path.relative_to(workspace.root)}"}
+        return {"error": f"File not found: {workspace.display_path(path)}"}
     if not path.is_file():
-        return {"error": f"Not a file: {path.relative_to(workspace.root)}"}
+        return {"error": f"Not a file: {workspace.display_path(path)}"}
     offset = int(args.get("offset", 1))
     limit = int(args.get("limit", 200))
     text = path.read_text(encoding="utf-8")
@@ -477,14 +684,193 @@ def read_file(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     selected = lines[max(offset - 1, 0) : max(offset - 1, 0) + limit]
     numbered = "\n".join(f"{index + offset}|{line}" for index, line in enumerate(selected))
     return {
-        "path": str(path.relative_to(workspace.root)),
+        "path": workspace.display_path(path),
         "total_lines": total,
         "content": numbered,
     }
 
 
 def pwd(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
-    return {"cwd": str(workspace.root), "path": "."}
+    return {
+        "cwd": str(workspace.cwd),
+        "workspace_root": str(workspace.root),
+        "read_only": workspace.read_only,
+    }
+
+
+def cd(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    raw = _require_str(args, "path")
+    target = Path(raw).expanduser()
+    try:
+        new_cwd = workspace.change_cwd(target)
+    except WorkspaceError as exc:
+        return {"error": str(exc)}
+    inside = workspace.is_inside_root(new_cwd)
+    return {
+        "cwd": str(new_cwd),
+        "workspace_root": str(workspace.root),
+        "inside_workspace": inside,
+        "read_only": not inside,
+        "notice": (
+            "Inside workspace — full permissions in effect."
+            if inside
+            else "Outside workspace — read-only mode. Use change_workspace to switch trust boundary."
+        ),
+    }
+
+
+def _plan_store():
+    """Local import + lazy global so tests can swap the env override before use."""
+    from codeagents.plan_store import PlanStore
+
+    return PlanStore.global_default()
+
+
+def _plan_summary_dict(plan) -> dict[str, Any]:
+    return {
+        "id": plan.id,
+        "title": plan.title,
+        "status": plan.status,
+        "total_steps": plan.total_steps,
+        "done_steps": plan.done_steps,
+        "workspace": plan.workspace,
+        "chat_id": plan.chat_id,
+        "updated_at": plan.updated_at,
+    }
+
+
+def create_plan_tool(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    from codeagents.plan_store import PlanLimitError
+
+    title = _require_str(args, "title").strip()
+    summary = _require_str(args, "summary").strip()
+    raw_steps = args.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return {"error": "steps must be a non-empty list of {title, detail} objects"}
+    norm_steps: list[dict[str, Any]] = []
+    for step in raw_steps:
+        if not isinstance(step, dict):
+            return {"error": "each step must be an object with 'title' and 'detail'"}
+        s_title = str(step.get("title") or step.get("name") or "").strip()
+        if not s_title:
+            return {"error": "each step requires a non-empty 'title'"}
+        norm_steps.append(
+            {
+                "title": s_title,
+                "detail": str(step.get("detail") or step.get("description") or "").strip(),
+            }
+        )
+    # chat_id is *injected* by AgentCore via workspace.chat_id (per-turn).
+    # The model never sees this argument, so we don't accept it via args.
+    chat_id = (workspace.chat_id or str(args.get("chat_id") or "")).strip()
+    try:
+        plan = _plan_store().create(
+            title=title,
+            summary=summary,
+            steps=norm_steps,
+            workspace=str(workspace.root),
+            chat_id=chat_id,
+        )
+    except PlanLimitError as exc:
+        return {"error": str(exc)}
+    return {
+        **_plan_summary_dict(plan),
+        "markdown": plan.to_markdown(),
+        "notice": (
+            "Plan created. The user sees it in the chat banner; they need to click "
+            "Build before you start executing it."
+        ),
+    }
+
+
+def patch_plan_tool(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    from codeagents.plan_store import PlanNotFoundError
+
+    plan_id = _require_str(args, "plan_id").strip()
+    title = args.get("title")
+    summary = args.get("summary")
+    raw_steps = args.get("steps")
+    steps: list[dict[str, Any]] | None = None
+    if raw_steps is not None:
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return {"error": "steps must be a non-empty list when provided"}
+        steps = []
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                return {"error": "each step must be an object"}
+            s_title = str(step.get("title") or step.get("name") or "").strip()
+            if not s_title:
+                return {"error": "each step requires a non-empty 'title'"}
+            steps.append(
+                {
+                    "title": s_title,
+                    "detail": str(step.get("detail") or step.get("description") or "").strip(),
+                }
+            )
+    if title is None and summary is None and steps is None:
+        return {"error": "provide at least one of title, summary, steps"}
+    try:
+        plan = _plan_store().patch(
+            plan_id,
+            title=title.strip() if isinstance(title, str) else None,
+            summary=summary.strip() if isinstance(summary, str) else None,
+            steps=steps,
+        )
+    except PlanNotFoundError:
+        return {"error": f"plan {plan_id} not found"}
+    return {**_plan_summary_dict(plan), "markdown": plan.to_markdown()}
+
+
+def mark_step_tool(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    from codeagents.plan_store import PlanNotFoundError
+
+    plan_id = _require_str(args, "plan_id").strip()
+    try:
+        step_n = int(args["step_n"])
+    except (KeyError, TypeError, ValueError):
+        return {"error": "step_n must be an integer"}
+    status = str(args.get("status") or "").strip()
+    if status not in {"pending", "in_progress", "done", "skipped"}:
+        return {
+            "error": "status must be one of 'pending', 'in_progress', 'done', 'skipped'"
+        }
+    note = str(args.get("note") or "").strip()
+    try:
+        plan = _plan_store().mark_step(plan_id, step_n, status, note=note)  # type: ignore[arg-type]
+    except PlanNotFoundError:
+        return {"error": f"plan {plan_id} not found"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return _plan_summary_dict(plan)
+
+
+def list_plans_tool(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    raw = str(args.get("status") or "all").strip().lower()
+    plans = _plan_store().list()
+    if raw == "active":
+        from codeagents.plan_store import ACTIVE_STATUSES
+
+        plans = [p for p in plans if p.status in ACTIVE_STATUSES]
+    elif raw in {"draft", "building", "completed", "rejected"}:
+        plans = [p for p in plans if p.status == raw]
+    return {"plans": [_plan_summary_dict(p) for p in plans]}
+
+
+def change_workspace(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
+    raw = _require_str(args, "path")
+    target = Path(raw).expanduser()
+    try:
+        new_root = workspace.change_root(target)
+    except WorkspaceError as exc:
+        return {"error": str(exc)}
+    return {
+        "workspace_root": str(new_root),
+        "cwd": str(workspace.cwd),
+        "notice": (
+            "Workspace switched. Approvals/permissions are scoped to the new root; "
+            "you may need to re-grant write/network access."
+        ),
+    }
 
 
 def ls(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
@@ -492,16 +878,17 @@ def ls(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     show_all = bool(args.get("all", False))
     long = bool(args.get("long", False))
     max_results = int(args.get("max_results", 200))
-    target = workspace.resolve_inside(relative)
+    target = workspace.resolve_for_read(relative)
     if not target.exists():
         return {"error": f"Path not found: {relative}"}
+    base = target if target.is_dir() else target.parent
     if target.is_file():
-        return {"path": relative, "entries": [_ls_entry(target, workspace.root, long=long)], "count": 1}
+        return {"path": relative, "entries": [_ls_entry(target, base, long=long)], "count": 1}
     entries: list[str] = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         if not show_all and child.name.startswith("."):
             continue
-        entries.append(_ls_entry(child, workspace.root, long=long))
+        entries.append(_ls_entry(child, base, long=long))
         if len(entries) >= max_results:
             entries.append("... (truncated)")
             break
@@ -509,18 +896,18 @@ def ls(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def cat(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
-    path = workspace.resolve_inside(_require_str(args, "path"))
+    path = workspace.resolve_for_read(_require_str(args, "path"))
     if not path.exists():
-        return {"error": f"File not found: {path.relative_to(workspace.root)}"}
+        return {"error": f"File not found: {workspace.display_path(path)}"}
     if not path.is_file():
-        return {"error": f"Not a file: {path.relative_to(workspace.root)}"}
+        return {"error": f"Not a file: {workspace.display_path(path)}"}
     offset = int(args.get("offset", 1))
     limit = int(args.get("limit", 400))
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     selected = lines[max(offset - 1, 0) : max(offset - 1, 0) + limit]
     return {
-        "path": str(path.relative_to(workspace.root)),
+        "path": workspace.display_path(path),
         "offset": offset,
         "limit": limit,
         "total_lines": len(lines),
@@ -533,7 +920,7 @@ def grep(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     relative = str(args.get("path", "."))
     ignore_case = bool(args.get("ignore_case", False))
     max_count = int(args.get("max_count", 100))
-    target = workspace.resolve_inside(relative)
+    target = workspace.resolve_for_read(relative)
     if not target.exists():
         return {"error": f"Path not found: {relative}"}
     if shutil.which("rg") is not None:
@@ -541,7 +928,7 @@ def grep(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
         if ignore_case:
             argv.append("--ignore-case")
         argv.extend([query, str(target)])
-        return _run(argv, cwd=workspace.root)
+        return _run(argv, cwd=workspace.cwd)
     return _python_search(workspace, query=query, max_count=max_count, root=target, ignore_case=ignore_case)
 
 
@@ -551,18 +938,18 @@ def head(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def tail(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
-    path = workspace.resolve_inside(_require_str(args, "path"))
+    path = workspace.resolve_for_read(_require_str(args, "path"))
     if not path.exists():
-        return {"error": f"File not found: {path.relative_to(workspace.root)}"}
+        return {"error": f"File not found: {workspace.display_path(path)}"}
     if not path.is_file():
-        return {"error": f"Not a file: {path.relative_to(workspace.root)}"}
+        return {"error": f"Not a file: {workspace.display_path(path)}"}
     limit = int(args.get("lines", 20))
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     selected = lines[-limit:] if limit > 0 else []
     start = max(len(lines) - len(selected) + 1, 1)
     return {
-        "path": str(path.relative_to(workspace.root)),
+        "path": workspace.display_path(path),
         "offset": start,
         "limit": limit,
         "total_lines": len(lines),
@@ -571,15 +958,15 @@ def tail(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def wc(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
-    path = workspace.resolve_inside(_require_str(args, "path"))
+    path = workspace.resolve_for_read(_require_str(args, "path"))
     if not path.exists():
-        return {"error": f"File not found: {path.relative_to(workspace.root)}"}
+        return {"error": f"File not found: {workspace.display_path(path)}"}
     if not path.is_file():
-        return {"error": f"Not a file: {path.relative_to(workspace.root)}"}
+        return {"error": f"Not a file: {workspace.display_path(path)}"}
     raw = path.read_bytes()
     text = raw.decode("utf-8")
     return {
-        "path": str(path.relative_to(workspace.root)),
+        "path": workspace.display_path(path),
         "lines": len(text.splitlines()),
         "words": len(text.split()),
         "bytes": len(raw),
@@ -1479,7 +1866,7 @@ def _run(argv: list[str], *, cwd: Path, timeout: int = 60) -> dict[str, Any]:
 
 def _command_cwd(workspace: Workspace, raw_cwd: Any) -> Path:
     if raw_cwd is None or raw_cwd == "":
-        return workspace.root
+        return workspace.cwd
     if not isinstance(raw_cwd, str):
         raise ValueError("cwd must be a workspace-relative string")
     cwd = workspace.resolve_inside(raw_cwd)

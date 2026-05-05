@@ -30,14 +30,57 @@ pub struct ToolResponse {
     pub result: Value,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ModelsResponse {
-    pub models: Vec<Value>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConfigModel {
+    pub key: String,
+    pub name: String,
+    pub role: String,
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ModelsResponse {
+    pub models: Vec<ConfigModel>,
+}
+
+/// Row from `GET /inference/models` (registry + discovered Ollama models).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InferenceModelEntry {
+    pub key: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub runtime_model: String,
+    #[serde(default)]
+    pub notes: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct InferenceModelsResponse {
+    pub models: Vec<InferenceModelEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub kind: String,
+    pub permission: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolsResponse {
-    pub tools: Vec<Value>,
+    pub tools: Vec<ToolInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,10 +203,143 @@ pub enum StreamEvent {
         level: String,
         message: String,
     },
-    Done,
+    Done {
+        model: String,
+        stop_reason: String,
+    },
+    TerminalOutput {
+        session_id: String,
+        chunk: String,
+    },
     Error {
         message: String,
     },
+}
+
+/// Wire-format NDJSON events from the Python agent (matches `stream_events.py`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum AgentNdjsonEvent {
+    #[serde(rename = "model_info")]
+    ModelInfo { model: String },
+    #[serde(rename = "delta")]
+    Delta {
+        #[serde(default)]
+        content: String,
+    },
+    #[serde(rename = "thinking")]
+    Thinking {
+        #[serde(default)]
+        content: String,
+    },
+    #[serde(rename = "tool_call_start")]
+    ToolCallStart {
+        index: u64,
+        #[serde(default)]
+        name: String,
+    },
+    #[serde(rename = "tool_call_delta")]
+    ToolCallDelta {
+        index: u64,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        delta: String,
+    },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        name: String,
+        #[serde(default)]
+        arguments: String,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        name: String,
+        #[serde(default)]
+        result: String,
+    },
+    #[serde(rename = "tool_pending")]
+    ToolPending {
+        decision_id: String,
+        name: String,
+        #[serde(default)]
+        arguments: String,
+        #[serde(default)]
+        remember_supported: bool,
+        #[serde(default)]
+        warning: String,
+    },
+    #[serde(rename = "notice")]
+    Notice {
+        #[serde(default)]
+        level: String,
+        #[serde(default)]
+        message: String,
+    },
+    #[serde(rename = "done")]
+    Done {
+        #[serde(default)]
+        model: String,
+        #[serde(default)]
+        stop_reason: String,
+    },
+    #[serde(rename = "error")]
+    Error { message: String },
+    #[serde(rename = "terminal_output")]
+    TerminalOutput {
+        #[serde(default)]
+        session_id: String,
+        #[serde(default)]
+        chunk: String,
+    },
+}
+
+impl From<AgentNdjsonEvent> for StreamEvent {
+    fn from(ev: AgentNdjsonEvent) -> Self {
+        match ev {
+            AgentNdjsonEvent::ModelInfo { model } => StreamEvent::ModelInfo { model },
+            AgentNdjsonEvent::Delta { content } => StreamEvent::Delta { content },
+            AgentNdjsonEvent::Thinking { content } => StreamEvent::Thinking { content },
+            AgentNdjsonEvent::ToolCallStart { index, name } => StreamEvent::ToolCallStart {
+                index: index as u32,
+                name,
+            },
+            AgentNdjsonEvent::ToolCallDelta { index, name, delta } => {
+                StreamEvent::ToolCallDelta {
+                    index: index as u32,
+                    name,
+                    delta,
+                }
+            }
+            AgentNdjsonEvent::ToolCall { name, arguments } => StreamEvent::ToolCall {
+                name,
+                arguments,
+            },
+            AgentNdjsonEvent::ToolResult { name, result } => StreamEvent::ToolResult { name, result },
+            AgentNdjsonEvent::ToolPending {
+                decision_id,
+                name,
+                arguments,
+                remember_supported,
+                warning,
+            } => StreamEvent::ToolPending {
+                decision_id,
+                name,
+                arguments,
+                remember_supported,
+                warning,
+            },
+            AgentNdjsonEvent::Notice { level, message } => StreamEvent::Notice { level, message },
+            AgentNdjsonEvent::Done { model, stop_reason } => StreamEvent::Done {
+                model,
+                stop_reason,
+            },
+            AgentNdjsonEvent::Error { message } => StreamEvent::Error { message },
+            AgentNdjsonEvent::TerminalOutput { session_id, chunk } => {
+                StreamEvent::TerminalOutput { session_id, chunk }
+            }
+        }
+    }
 }
 
 pub struct NdjsonStream {
@@ -185,57 +361,10 @@ impl Iterator for NdjsonStream {
             if line.is_empty() {
                 continue;
             }
-            let Ok(obj) = serde_json::from_str::<Value>(line) else {
+            let Ok(ev) = serde_json::from_str::<AgentNdjsonEvent>(line) else {
                 continue;
             };
-            let event_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
-            return Some(match event_type {
-                "delta" => StreamEvent::Delta {
-                    content: obj["content"].as_str().unwrap_or("").to_string(),
-                },
-                "thinking" => StreamEvent::Thinking {
-                    content: obj["content"].as_str().unwrap_or("").to_string(),
-                },
-                "tool_call" => StreamEvent::ToolCall {
-                    name: obj["name"].as_str().unwrap_or("").to_string(),
-                    arguments: obj["arguments"].as_str().unwrap_or("{}").to_string(),
-                },
-                "tool_call_start" => StreamEvent::ToolCallStart {
-                    index: obj["index"].as_u64().unwrap_or(0) as u32,
-                    name: obj["name"].as_str().unwrap_or("").to_string(),
-                },
-                "tool_call_delta" => StreamEvent::ToolCallDelta {
-                    index: obj["index"].as_u64().unwrap_or(0) as u32,
-                    name: obj["name"].as_str().unwrap_or("").to_string(),
-                    delta: obj["delta"].as_str().unwrap_or("").to_string(),
-                },
-                "tool_result" => StreamEvent::ToolResult {
-                    name: obj["name"].as_str().unwrap_or("").to_string(),
-                    result: obj["result"].as_str().unwrap_or("").to_string(),
-                },
-                "model_info" => StreamEvent::ModelInfo {
-                    model: obj["model"].as_str().unwrap_or("").to_string(),
-                },
-                "notice" => StreamEvent::Notice {
-                    level: obj["level"].as_str().unwrap_or("info").to_string(),
-                    message: obj["message"].as_str().unwrap_or("").to_string(),
-                },
-                "tool_pending" => StreamEvent::ToolPending {
-                    decision_id: obj["decision_id"].as_str().unwrap_or("").to_string(),
-                    name: obj["name"].as_str().unwrap_or("").to_string(),
-                    arguments: obj["arguments"].as_str().unwrap_or("{}").to_string(),
-                    remember_supported: obj["remember_supported"].as_bool().unwrap_or(false),
-                    warning: obj["warning"].as_str().unwrap_or("").to_string(),
-                },
-                "done" => StreamEvent::Done,
-                "error" => StreamEvent::Error {
-                    message: obj["message"]
-                        .as_str()
-                        .unwrap_or("unknown error")
-                        .to_string(),
-                },
-                _ => continue,
-            });
+            return Some(ev.into());
         }
     }
 }
@@ -261,7 +390,7 @@ impl ApiClient {
         self.get("/models")
     }
 
-    pub fn inference_models(&self) -> Result<ModelsResponse> {
+    pub fn inference_models(&self) -> Result<InferenceModelsResponse> {
         self.get("/inference/models")
     }
 

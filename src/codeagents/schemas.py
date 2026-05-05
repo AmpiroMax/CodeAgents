@@ -7,6 +7,52 @@ from typing import Annotated, Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
+class ChatMeta(BaseModel):
+    """Structured chat session metadata (stored inside Chat.meta dict)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    mode: Literal["plan", "agent", "ask", "general"] = "agent"
+    task: str = "general"
+    workspace: str | None = None
+    default_model: str | None = None
+    mcp_servers_enabled: bool | None = None
+    lsp_workspace_folders: list[str] = Field(default_factory=list)
+    terminal_sessions: list[str] = Field(default_factory=list)
+
+
+def function_parameters_from_json_schema(schema: dict[str, Any]) -> list[FunctionParameter]:
+    """Map a JSON Schema object (MCP tool inputSchema) to OpenAI-style parameters."""
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return []
+    required = set(schema.get("required") or []) if isinstance(schema.get("required"), list) else set()
+    out: list[FunctionParameter] = []
+    for pname, sub in props.items():
+        if not isinstance(sub, dict):
+            continue
+        desc = str(sub.get("description", ""))
+        sub_schema = {k: v for k, v in sub.items() if k != "description"}
+        if "type" not in sub_schema:
+            sub_schema["type"] = "string"
+        out.append(
+            FunctionParameter(
+                name=str(pname),
+                schema=sub_schema,
+                description=desc,
+                required=str(pname) in required,
+            )
+        )
+    return out
+
+
+def merge_chat_meta(raw: dict[str, Any] | None) -> ChatMeta:
+    """Merge API-provided meta with defaults (unknown keys preserved via extra)."""
+    if not raw:
+        return ChatMeta()
+    return ChatMeta.model_validate(raw)
+
+
 def stable_hash(value: Any) -> str:
     raw = json.dumps(_dump(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
