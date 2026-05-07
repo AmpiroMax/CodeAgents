@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from codeagents.kg_indexer import reindex_kg
-from codeagents.kg_store import Community, Entity, KGStore, Relation
+from codeagents.rag.kg_indexer import reindex_kg
+from codeagents.stores.kg import Community, Entity, KGStore, Relation
 
 
 def test_reindex_empty_graph_marks_clean(tmp_path: Path) -> None:

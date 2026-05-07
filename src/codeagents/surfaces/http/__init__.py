@@ -1,13 +1,22 @@
-"""HTTP surface package.
+"""HTTP surface: NDJSON streaming server consumed by the GUI and CLI.
 
-The route table primitives live in :mod:`codeagents.surfaces.http.router`.
-The actual server (handler + ``serve``) still lives in
-:mod:`codeagents.server`; importing it here would create a circular load
-because ``server`` itself populates a route table built from
-:class:`Route`. Stage 4 keeps the canonical entry points where they are
-and only adds a routing helper alongside them.
+* :mod:`codeagents.surfaces.http.server` — :class:`AgentRequestHandler`,
+  :class:`ReusableThreadingHTTPServer`, :func:`serve` entry point.
+* :mod:`codeagents.surfaces.http.router` — :class:`Route` dataclass and
+  :func:`dispatch` helper used by the handler's GET routing table.
 """
 
-# Submodules are reached via explicit imports, e.g.:
-#   from codeagents.surfaces.http.router import Route, dispatch
-#   from codeagents.server import serve, AgentRequestHandler
+from codeagents.surfaces.http.router import Route, dispatch
+from codeagents.surfaces.http.server import (
+    AgentRequestHandler,
+    ReusableThreadingHTTPServer,
+    serve,
+)
+
+__all__ = [
+    "AgentRequestHandler",
+    "ReusableThreadingHTTPServer",
+    "Route",
+    "dispatch",
+    "serve",
+]

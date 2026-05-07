@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.agent import AgentCore
-from codeagents.chat_store import ChatStore
-from codeagents.model_service import LocalModelService
-from codeagents.request_log import ServiceRequestLogger
-from codeagents.server import (
+from codeagents.core.orchestrator import AgentCore
+from codeagents.stores.chat import ChatStore
+from codeagents.core.runtime.service import LocalModelService
+from codeagents.observability.request_log import ServiceRequestLogger
+from codeagents.surfaces.http.server import (
     AgentRequestHandler,
     ReusableThreadingHTTPServer,
     _normalize_title,
@@ -106,7 +106,7 @@ def test_post_title_uses_active_model_and_normalizes(
         # to the runtime so we can assert the GUI's chosen model is used.
         captured: dict[str, object] = {}
 
-        from codeagents.runtime import OpenAICompatibleRuntime
+        from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime
 
         def fake_chat(self, *, model, chat, reasoning_effort=None):
             captured["model"] = model.name

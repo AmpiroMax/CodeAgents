@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 from codeagents.tools import ToolRegistry
 from codeagents.tools._native_specs import NATIVE_TOOL_SPECS
 from codeagents.tools._registry import register_native_specs
 from codeagents.tools.native_code import register_code_tools
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 class _StubLsp:

@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
-from codeagents.auto_recall import (
+from codeagents.core.conversation.auto_recall import (
     DEFAULT_THRESHOLD,
     MIN_HISTORY,
     AutoRecallResult,
     maybe_recall,
 )
-from codeagents.chat_rag import ChatEmbeddingStore
+from codeagents.rag.chat_embeddings import ChatEmbeddingStore
 
 
 class _FakeEmbedder:

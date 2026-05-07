@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from codeagents.chat_attachments import save_chat_base64_upload
+from codeagents.core.chat_attachments import save_chat_base64_upload
 
 
 def test_save_chat_base64_upload_writes_file(tmp_path) -> None:

@@ -23,9 +23,9 @@ import tempfile
 from typing import Any
 from urllib.parse import urlparse
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 from codeagents.tools import ParamSpec, ToolRegistry, ToolSpec
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 _PDF_SIGNATURE = b"%PDF"

@@ -62,10 +62,14 @@ type Mode = (typeof MODES)[number];
 /** Build the nested palette tree for "Available tools".
  *
  *   Available tools
- *     → <mode>            (one row per mode, hint: tool count)
- *         → <tool name>   (one row per tool, hint: short description)
- *             → description / permission / kind         (info rows)
- *             → arg <name>: <type> (required?)          (one row per param)
+ *     → <mode>             (one row per mode, hint: tool count)
+ *         → <tool name>    (just the name, with a ``›`` chevron)
+ *             → description (label left, value right; wraps)
+ *             → permission  (label left, value right)
+ *             → kind        (label left, value right)
+ *             → arguments   (sub-page when the tool has parameters)
+ *                 → <arg>   (label = name, hint = "type · required",
+ *                             drills into the arg description)
  *
  * Nothing here is truncated — descriptions are shown verbatim so the
  * user sees exactly what the agent sees. */
@@ -88,7 +92,8 @@ function buildToolsMenu(data: ToolsByMode | null): PaletteCommand[] {
           : tools.map((tool) => ({
               id: `tool-${mode}-${tool.name}`,
               label: tool.name,
-              hint: tool.description.split("\n")[0].slice(0, 80),
+              // No ``hint`` — the full row goes to the tool name; the
+              // automatic ``›`` chevron signals "open for details".
               children: () => buildToolDetailRows(tool),
             })),
     } as PaletteCommand;
@@ -97,41 +102,87 @@ function buildToolsMenu(data: ToolsByMode | null): PaletteCommand[] {
 
 function buildToolDetailRows(tool: ToolInfo): PaletteCommand[] {
   const rows: PaletteCommand[] = [];
-  // Description: split on newlines so a multi-line description renders
-  // as multiple rows instead of being truncated by ``palette-label``.
-  const descLines = (tool.description || "(no description)").split("\n");
-  descLines.forEach((line, i) => {
-    rows.push({
-      id: `desc-${tool.name}-${i}`,
-      label: line || " ",
-      hint: i === 0 ? "description" : undefined,
-      wrap: true,
-    });
+  rows.push({
+    id: `desc-${tool.name}`,
+    label: "description",
+    hint: tool.description || "(no description)",
+    wrapHint: true,
   });
   rows.push({
     id: `perm-${tool.name}`,
-    label: tool.permission,
-    hint: "permission",
+    label: "permission",
+    hint: tool.permission,
   });
   rows.push({
     id: `kind-${tool.name}`,
-    label: tool.kind,
-    hint: "kind",
+    label: "kind",
+    hint: tool.kind,
   });
   if (tool.parameters.length === 0) {
-    rows.push({ id: `noparams-${tool.name}`, label: "(no parameters)" });
+    rows.push({
+      id: `noargs-${tool.name}`,
+      label: "arguments",
+      hint: "(none)",
+    });
   } else {
-    for (const p of tool.parameters) {
-      const flags: string[] = [p.type];
-      if (p.required) flags.push("required");
-      if (p.enum && p.enum.length > 0) flags.push(`enum: ${p.enum.join("|")}`);
-      rows.push({
-        id: `param-${tool.name}-${p.name}`,
-        label: `${p.name} — ${p.description || "(no description)"}`,
-        hint: flags.join(" · "),
-        wrap: true,
-      });
-    }
+    rows.push({
+      id: `args-${tool.name}`,
+      label: "arguments",
+      hint: `${tool.parameters.length}`,
+      children: () => buildToolArgumentRows(tool),
+    });
+  }
+  return rows;
+}
+
+/** Sub-page rows for a tool's parameters.
+ *
+ * Each parameter is one drill-in row: ``name`` on the left, type info
+ * on the right. Drilling in shows the full argument description plus
+ * type / required / enum metadata as label/value pairs. */
+function buildToolArgumentRows(tool: ToolInfo): PaletteCommand[] {
+  return tool.parameters.map((p) => {
+    const flags: string[] = [p.type];
+    if (p.required) flags.push("required");
+    if (p.enum && p.enum.length > 0) flags.push(`enum: ${p.enum.join("|")}`);
+    return {
+      id: `arg-${tool.name}-${p.name}`,
+      label: p.name,
+      hint: flags.join(" · "),
+      children: () => buildArgumentDetailRows(tool, p),
+    };
+  });
+}
+
+function buildArgumentDetailRows(
+  tool: ToolInfo,
+  p: ToolInfo["parameters"][number],
+): PaletteCommand[] {
+  const rows: PaletteCommand[] = [
+    {
+      id: `argdesc-${tool.name}-${p.name}`,
+      label: "description",
+      hint: p.description || "(no description)",
+      wrapHint: true,
+    },
+    {
+      id: `argtype-${tool.name}-${p.name}`,
+      label: "type",
+      hint: p.type,
+    },
+    {
+      id: `argreq-${tool.name}-${p.name}`,
+      label: "required",
+      hint: p.required ? "yes" : "no",
+    },
+  ];
+  if (p.enum && p.enum.length > 0) {
+    rows.push({
+      id: `argenum-${tool.name}-${p.name}`,
+      label: "enum",
+      hint: p.enum.join(" | "),
+      wrapHint: true,
+    });
   }
   return rows;
 }
@@ -207,8 +258,9 @@ function AppInner() {
 
   // Phase 2.A.5: debounced poll of /budget/preview while the user is typing
   // OR after a stream finishes (so "tokens: last X" updates immediately).
+  // NOTE: ``base`` is "" when the GUI is served from ``/ui`` (relative URLs
+  // — same origin as the Python backend). Don't early-return on falsy base.
   useEffect(() => {
-    if (!base) return;
     let cancelled = false;
     const handle = window.setTimeout(() => {
       void fetchBudgetPreview(base).then((b) => {
@@ -678,8 +730,10 @@ function AppInner() {
   // so we fetch eagerly. If the very first attempt loses the race with
   // the Swift launcher's services start, retry every 2s until success.
   // Once we have data, the effect short-circuits.
+  // NOTE: ``base`` is "" (falsy!) when the GUI is served from ``/ui``;
+  // that's a valid value (use relative URLs), not "backend missing".
   useEffect(() => {
-    if (!base || toolsByMode) return;
+    if (toolsByMode) return;
     let cancelled = false;
     const attempt = async () => {
       const data = await fetchTools(base);
@@ -698,7 +752,6 @@ function AppInner() {
   // without a deploy of the frontend. Imported lazily so the initial bundle
   // is unchanged.
   useEffect(() => {
-    if (!base) return;
     let cancelled = false;
     void (async () => {
       const data = await fetchModes(base);

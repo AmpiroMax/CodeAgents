@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from codeagents.stream_events import (
+from codeagents.core.stream_events import (
     StreamDoneEvent,
     StreamModelInfoEvent,
     StreamToolResultEvent,

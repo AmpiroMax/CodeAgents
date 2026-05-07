@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.tools_native.code import (
+from codeagents.tools.native_code import (
     cat,
     cd,
     change_workspace,
@@ -13,7 +13,7 @@ from codeagents.tools_native.code import (
     write_file,
 )
 from codeagents.tools import ToolRegistry
-from codeagents.workspace import Workspace, WorkspaceError
+from codeagents.core.workspace import Workspace, WorkspaceError
 
 
 def _ws(path: Path) -> Workspace:
@@ -99,7 +99,7 @@ def test_web_search_registered_as_read_only(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     registry = ToolRegistry()
     register_code_tools(registry, ws)
-    from codeagents.permissions import Permission
+    from codeagents.core.permissions import Permission
 
     assert registry.get("web_search").permission == Permission.READ_ONLY
     assert registry.get("docs_search").permission == Permission.READ_ONLY

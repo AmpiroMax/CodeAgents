@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.token_counter import (
+from codeagents.core.budget.token_counter import (
     DEFAULT_CONTEXT_WINDOWS,
     MIN_CALIBRATION_SAMPLES,
     TokenBudget,

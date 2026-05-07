@@ -7,10 +7,10 @@ import gzip
 from pathlib import Path
 from typing import Any
 
-from codeagents.agent import AgentCore
-from codeagents.tools_native import code as code_tools
-from codeagents.tools_native.code import curl, docs_search, web_fetch, web_search
-from codeagents.workspace import Workspace
+from codeagents.core.orchestrator import AgentCore
+from codeagents.tools import web as code_tools
+from codeagents.tools.web import curl, docs_search, web_fetch, web_search
+from codeagents.core.workspace import Workspace
 
 
 def _workspace(path: Path) -> Workspace:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from codeagents.stream_events import (
+from codeagents.core.stream_events import (
     StreamDeltaEvent,
     StreamDoneEvent,
     StreamErrorEvent,

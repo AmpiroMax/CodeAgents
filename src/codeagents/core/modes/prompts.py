@@ -29,7 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from codeagents.config import PROJECT_ROOT
+from codeagents.core.config import PROJECT_ROOT
 
 _PROMPTS_DIR = PROJECT_ROOT / "registry" / "prompts" / "modes"
 
@@ -96,4 +96,20 @@ def resolve_prompt(mode: str, model: str | None) -> str:
     return default if isinstance(default, str) else ""
 
 
-__all__ = ["resolve_prompt", "reload_prompts"]
+def system_prompt_addendum(model_name: str | None, mode: str) -> str:
+    """Return the per-model override snippet for ``model_name`` in ``mode``.
+
+    Subtracts the mode's ``default`` from the resolved prompt so callers
+    that historically concatenated ``SYSTEM_PROMPT + addendum`` end up
+    with the same message. Returns an empty string when no per-model
+    override exists for the given combination.
+    """
+    full = resolve_prompt(mode, model_name)
+    data = _load_mode_file((mode or "agent").lower())
+    default = data.get("default") or ""
+    if full and default and full.startswith(default):
+        return full[len(default) :].lstrip()
+    return ""
+
+
+__all__ = ["resolve_prompt", "reload_prompts", "system_prompt_addendum"]

@@ -4,16 +4,16 @@ import argparse
 import json
 from pathlib import Path
 
-from codeagents.agent import AgentCore
-from codeagents.audit import AuditLog
+from codeagents.core.orchestrator import AgentCore
+from codeagents.observability.audit import AuditLog
 from codeagents.benchmark import load_eval_cases, run_benchmark, write_benchmark_results
-from codeagents.config import PROJECT_ROOT, load_app_config
-from codeagents.indexer import build_index, index_summary, search_index
-from codeagents.inference_log import InferenceLogger
-from codeagents.model_service import LocalModelService, RegisteredModel
-from codeagents.runtime import OpenAICompatibleRuntime, RuntimeErrorWithHint
-from codeagents.schemas import BatchInferenceRequest, Chat, InferenceRequest
-from codeagents.server import serve
+from codeagents.core.config import PROJECT_ROOT, load_app_config
+from codeagents.rag.workspace_index import build_index, index_summary, search_index
+from codeagents.observability.inference_log import InferenceLogger
+from codeagents.core.runtime.service import LocalModelService, RegisteredModel
+from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime, RuntimeErrorWithHint
+from codeagents.core.schemas import BatchInferenceRequest, Chat, InferenceRequest
+from codeagents.surfaces.http.server import serve
 from codeagents.tools import NATIVE_TOOL_SPECS, ToolRegistry, register_native_specs
 
 

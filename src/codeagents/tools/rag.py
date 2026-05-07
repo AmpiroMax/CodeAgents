@@ -3,15 +3,15 @@
 These were previously inlined in ``tools_native/code.py`` and only
 exist on top of the Phase 1 indexer / chat-RAG infrastructure. Pulled
 into a dedicated module so the main file shrinks and the dependency
-graph here is honest: we depend on :mod:`codeagents.indexer`,
-:mod:`codeagents.chat_rag`, :mod:`codeagents.runtime`, and nothing else.
+graph here is honest: we depend on :mod:`codeagents.rag.workspace_index`,
+:mod:`codeagents.rag.chat_embeddings`, :mod:`codeagents.runtime`, and nothing else.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 def _require_str(args: dict[str, Any], key: str) -> str:
@@ -30,9 +30,9 @@ def search_code(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     whether to retry without semantic mode.
     """
 
-    from codeagents.config import load_app_config
-    from codeagents.indexer import WorkspaceIndexer
-    from codeagents.runtime import OpenAICompatibleRuntime, RuntimeErrorWithHint
+    from codeagents.core.config import load_app_config
+    from codeagents.rag.workspace_index import WorkspaceIndexer
+    from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime, RuntimeErrorWithHint
 
     query = _require_str(args, "query")
     k = max(1, min(int(args.get("k", 8)), 50))
@@ -95,10 +95,10 @@ def recall_chat(workspace: Workspace, args: dict[str, Any]) -> dict[str, Any]:
     agent at the start of every turn) and the global chats root.
     """
 
-    from codeagents.chat_rag import ChatEmbeddingStore
-    from codeagents.chat_store import default_chats_dir
-    from codeagents.config import load_app_config
-    from codeagents.runtime import OpenAICompatibleRuntime
+    from codeagents.rag.chat_embeddings import ChatEmbeddingStore
+    from codeagents.stores.chat import default_chats_dir
+    from codeagents.core.config import load_app_config
+    from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime
 
     query = _require_str(args, "query")
     k = max(1, min(int(args.get("k", 5)), 20))

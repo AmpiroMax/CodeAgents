@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.plan_store import (
+from codeagents.stores.plan import (
     MAX_ACTIVE_PLANS,
     Plan,
     PlanLimitError,
@@ -15,15 +15,15 @@ from codeagents.plan_store import (
     PlanStep,
     default_plans_dir,
 )
-from codeagents.tools_native.code import (
+from codeagents.tools.native_code import (
     create_plan_tool,
     list_plans_tool,
     mark_step_tool,
     patch_plan_tool,
 )
 from codeagents.tools import ToolRegistry
-from codeagents.tools_native.code import register_code_tools
-from codeagents.workspace import Workspace
+from codeagents.tools.native_code import register_code_tools
+from codeagents.core.workspace import Workspace
 
 
 @pytest.fixture()

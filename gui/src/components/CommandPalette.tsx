@@ -14,6 +14,11 @@ export type PaletteCommand = {
   /** When true, the label is allowed to wrap to multiple lines instead
    * of being ellipsised. Used by info/detail rows (e.g. tool descriptions). */
   wrap?: boolean;
+  /** When true, the right-side ``hint`` becomes the long-form value and
+   * wraps to multiple lines. Used by tool-detail rows where the LEFT
+   * column is the field label (``description``, ``permission``, …) and
+   * the RIGHT column is the long value. */
+  wrapHint?: boolean;
 };
 
 /** Case-insensitive substring filter used by the palette and tests. */
@@ -249,7 +254,11 @@ export function CommandPalette({
                 {command.children ? <span className="palette-arrow"> ›</span> : null}
               </span>
               {command.hint ? (
-                <span className="palette-hint">{command.hint}</span>
+                <span
+                  className={`palette-hint${command.wrapHint ? " wrap" : ""}`}
+                >
+                  {command.hint}
+                </span>
               ) : null}
               {command.secondaryHint ? (
                 <span className="palette-secondary">

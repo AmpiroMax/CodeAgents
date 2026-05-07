@@ -9,7 +9,7 @@ import pytest
 
 from codeagents.tools import code_context as cc_module
 from codeagents.tools.code_context import code_context
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 class _FakeSession:

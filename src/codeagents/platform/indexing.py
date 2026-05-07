@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from codeagents.indexer import SearchResult, WorkspaceIndexer
+from codeagents.rag.workspace_index import SearchResult, WorkspaceIndexer
 
 
 @runtime_checkable
@@ -35,7 +35,7 @@ class SqliteCodeIndex(CodeIndexBackend):
         return self._indexer.root
 
     def build(self, *, embeddings: bool = False, **kwargs: Any) -> Any:
-        from codeagents.indexer import build_index
+        from codeagents.rag.workspace_index import build_index
 
         client = kwargs.get("embedding_client")
         model = kwargs.get("embedding_model")
@@ -55,7 +55,7 @@ class SqliteCodeIndex(CodeIndexBackend):
         embedding_client: Any = None,
         embedding_model: str | None = None,
     ) -> list[SearchResult]:
-        from codeagents.indexer import search_index
+        from codeagents.rag.workspace_index import search_index
 
         return search_index(
             self._indexer.root,

@@ -4,4 +4,5 @@ Other places (``src/codeagents/__init__.py``, ``pyproject.toml``,
 ``gui/package.json``) re-export / mirror this value. Update them via
 ``./set_version <major> <minor> <patch>`` — never edit by hand.
 """
-__version__ = "3.1.1"
+
+__version__ = "3.2.0"

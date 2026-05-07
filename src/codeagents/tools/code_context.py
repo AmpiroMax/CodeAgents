@@ -35,7 +35,7 @@ from codeagents.tools.lsp import (
     lsp_references,
     lsp_workspace_symbol,
 )
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 _TARGET_POSITION_RE = re.compile(r"^(.+?):(\d+)(?::(\d+))?$")
@@ -221,7 +221,7 @@ def code_context(
 def register_code_context_tool(
     registry: ToolRegistry, workspace: Workspace, lsp: LspManager
 ) -> None:
-    from codeagents.permissions import Permission
+    from codeagents.core.permissions import Permission
     from codeagents.tools._registry import ToolSpec
 
     registry.register(

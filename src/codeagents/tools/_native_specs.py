@@ -10,7 +10,7 @@ Generated once during the Stage-2 refactor from the legacy
 
 from __future__ import annotations
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 from codeagents.tools._registry import ParamSpec, ToolSpec
 
 

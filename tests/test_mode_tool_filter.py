@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.agent import AgentCore
-from codeagents.mode_tools import MODE_TOOLS, filter_for_mode, whitelist_for
+from codeagents.core.orchestrator import AgentCore
+from codeagents.core.modes import MODE_TOOLS, filter_for_mode, whitelist_for
 
 
 def _names(specs) -> set[str]:

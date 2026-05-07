@@ -33,31 +33,66 @@ flowchart TD
     AgentAPI --> Audit[Audit_Log]
 ```
 
-## Python source layout (post-Stage-7 refactor)
+## Python source layout (post-honest-refactor, May 2026)
+
+Only four files now live at the package root: `__init__.py`, `_version.py`,
+`benchmark.py`, `cli.py`. Everything else is owned by a subpackage:
 
 ```
 src/codeagents/
-├── core/                   facade + agent abstractions
-│   ├── modes/              ModeSpec registry + per-mode prompt resolver
-│   │   └── prompts.py      reads registry/prompts/modes/<mode>.json
-│   └── conversation/       situational policies (e.g. plan execution)
+├── cli.py                  CLI entry points (codeagents …)
+├── benchmark.py            standalone benchmarking harness
+├── core/                   agent core, runtime client, conversation, modes
+│   ├── orchestrator.py     AgentCore + lifecycle / tool dispatch / chat loop
+│   ├── routing.py          ConfirmationDecision, ToolCallResult, helpers
+│   ├── permissions.py      Permission, WorkspaceApprovalStore, policy loader
+│   ├── workspace.py        Workspace dataclass + change_root / change_cwd
+│   ├── schemas.py          Pydantic chat schemas + FunctionSpec
+│   ├── stream_events.py    NDJSON stream event union
+│   ├── chat_attachments.py per-message attachment metadata
+│   ├── config.py           AppConfig / ModelProfile / runtime settings
+│   ├── runtime/            OpenAI-compatible client, model router, services
+│   │   ├── openai_client.py · router.py · service.py
+│   ├── conversation/       per-turn helpers
+│   │   ├── auto_recall.py · summarisation.py · policies.py
+│   ├── budget/             token-budget machinery
+│   │   ├── token_counter.py · params.py
+│   └── modes/              ModeSpec + per-mode prompt resolver
+│       └── prompts.py      reads registry/prompts/modes/<mode>.json
 ├── tools/                  single source of truth for native tools
 │   ├── _registry.py        ToolSpec / ParamSpec / ToolRegistry
-│   ├── _native_specs.py    descriptions + parameter schemas (was config/tools.toml)
-│   ├── native_code.py      handlers (read/write/edit/grep/glob/bash/web/...)
+│   ├── _native_specs.py    descriptions + parameter schemas
+│   ├── native_code.py      remaining filesystem/shell/web handlers
+│   ├── git.py              git_diff, git_status (extracted)
+│   ├── plans.py            create_plan / patch_plan / mark_step / list_plans
+│   ├── workspace_ctl.py    cd, change_workspace
+│   ├── lsp.py              5 narrow LSP lookup tools
+│   ├── code_context.py     umbrella LSP+RAG context tool
 │   ├── pdf.py · research.py · kg.py · rag.py
-├── stores/                 (skeleton; ChatStore/PlanStore/etc. still at root)
-├── rag/                    (skeleton; indexer/chat_rag still at root)
-├── observability/          shared _jsonl helper + (re-export skeleton)
+├── lsp/                    long-lived per-language LSP server pool
+│   └── manager.py · session.py · diagnostics.py · config.py
+├── rag/                    workspace + chat embeddings, background indexers
+│   └── workspace_index.py · chat_embeddings.py
+│   └── background_worker.py · kg_indexer.py
+├── stores/                 chat / plan / research / KG persistence
+│   └── chat.py · plan.py · research.py · kg.py
+├── observability/          audit + inference / runtime / request logs + metrics
+│   └── audit.py · inference_log.py · request_log.py · runtime_log.py
+│   └── metrics_sampler.py · resource_metrics.py · _jsonl.py
 ├── surfaces/
-│   ├── http/router.py      Route + dispatch (used by server.py do_GET)
-│   └── mcp/                MCP server entry point shim
-├── modes/                  back-compat shim → core.modes
-├── tools_native/           back-compat shim → tools/
-└── (legacy flat modules: agent.py, server.py, runtime.py, schemas.py,
-   permissions.py, workspace.py, chat_store.py, plan_store.py,
-   research_store.py, kg_store.py, indexer.py, ...)
+│   ├── http/               server.py + router.py (NDJSON streaming HTTP API)
+│   └── mcp/                server.py + adapter.py + bridge.py (MCP stdio)
+└── platform/               per-OS document/index location helpers
 ```
+
+Hard-deleted in this refactor (backups in `thirdparty/old_dumps/2026-05-07/`):
+
+* `tools_native/` (back-compat shim)
+* `modes/` (duplicate of `core.modes`)
+* `mode_tools.py`, `system_prompts.py` (re-export shims)
+* `lsp/integration.py` (legacy single-shot `lsp_query`)
+* All formerly-flat modules (`agent.py`, `server.py`, `runtime.py`,
+  `chat_store.py`, etc.) — now live inside their subpackages.
 
 Single sources of truth:
 

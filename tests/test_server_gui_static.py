@@ -8,11 +8,11 @@ import threading
 import time
 from pathlib import Path
 
-from codeagents.agent import AgentCore
-from codeagents.chat_store import ChatStore
-from codeagents.model_service import LocalModelService
-from codeagents.request_log import ServiceRequestLogger
-from codeagents.server import AgentRequestHandler, ReusableThreadingHTTPServer
+from codeagents.core.orchestrator import AgentCore
+from codeagents.stores.chat import ChatStore
+from codeagents.core.runtime.service import LocalModelService
+from codeagents.observability.request_log import ServiceRequestLogger
+from codeagents.surfaces.http.server import AgentRequestHandler, ReusableThreadingHTTPServer
 
 
 def _start_with_gui(tmp_path: Path, gui: Path) -> ReusableThreadingHTTPServer:

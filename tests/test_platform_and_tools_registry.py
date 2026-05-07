@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 from codeagents.platform.documents import ExtractedDocument, NoopDocumentExtractor
 from codeagents.platform.indexing import SqliteCodeIndex
 from codeagents.tools import ToolRegistry, ToolSpec

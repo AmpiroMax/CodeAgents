@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from codeagents.research_store import ResearchStore
-from codeagents.tools_native import research as R
-from codeagents.workspace import Workspace
+from codeagents.stores.research import ResearchStore
+from codeagents.tools import research as R
+from codeagents.core.workspace import Workspace
 
 
 # ── Fakes ────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ def fake_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workspace
     chats_root = tmp_path / "chats"
     chats_root.mkdir()
     monkeypatch.setattr(
-        "codeagents.chat_store.default_chats_dir", lambda: chats_root
+        "codeagents.stores.chat.default_chats_dir", lambda: chats_root
     )
     return ws
 
@@ -200,7 +200,7 @@ def test_extract_facts_appends_to_section_and_notes(fake_workspace: Workspace) -
     assert all("source_url" in f for f in res["facts"])
 
     # Both notes.jsonl and the section facts are populated.
-    from codeagents.chat_store import default_chats_dir
+    from codeagents.stores.chat import default_chats_dir
 
     store = ResearchStore(default_chats_dir())
     notes = list(store.iter_notes("chat-1", rep["report_id"]))
@@ -240,7 +240,7 @@ def test_draft_section_emits_markdown(fake_workspace: Workspace) -> None:
 
 def test_assemble_report_includes_kg_conflicts(fake_workspace: Workspace) -> None:
     """Phase 2.C.4: assemble_report renders a 'Conflicting claims' block."""
-    from codeagents.tools_native import kg as K
+    from codeagents.tools import kg as K
 
     _set_runtime(
         [

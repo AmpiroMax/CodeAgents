@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from codeagents.agent import _allowed_permissions_for_mode
-from codeagents.permissions import Permission
+from codeagents.core.orchestrator import _allowed_permissions_for_mode
+from codeagents.core.permissions import Permission
 
 
 def test_allowed_permissions_ask_read_only() -> None:

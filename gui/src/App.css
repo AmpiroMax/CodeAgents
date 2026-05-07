@@ -1126,6 +1126,36 @@ textarea {
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11px;
+  white-space: nowrap;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Detail rows (tool description / parameter description) render the
+ * value in the *right* column and need to wrap, not ellipsise. */
+.palette-hint.wrap {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+  max-width: none;
+  flex: 1;
+  text-align: left;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.palette-item:has(.palette-hint.wrap) {
+  align-items: flex-start;
+}
+
+.palette-item:has(.palette-hint.wrap) .palette-label {
+  flex: 0 0 140px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .palette-empty {

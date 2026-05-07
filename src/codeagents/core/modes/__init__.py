@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 
 # Tool whitelists used to live in ``codeagents.mode_tools``. The data is
 # now owned here; that module re-exports for back-compat.
@@ -94,7 +94,16 @@ _MODE_PERMISSIONS: dict[str, frozenset[Permission] | None] = {
     "ask": frozenset({Permission.READ_ONLY}),
     "plan": frozenset({Permission.READ_ONLY, Permission.PROPOSE}),
     "research": frozenset({Permission.READ_ONLY, Permission.PROPOSE}),
-    "agent": None,  # all enabled tools
+    "agent": frozenset(
+        {
+            Permission.READ_ONLY,
+            Permission.WORKSPACE_WRITE,
+            Permission.NETWORK,
+            Permission.SHELL_SAFE,
+            Permission.PROPOSE,
+        }
+    ),
+    # "agent": None,  # all enabled tools
 }
 
 
@@ -188,8 +197,12 @@ def list_modes() -> list[dict[str, Any]]:
 
 from codeagents.core.modes.prompts import resolve_prompt  # noqa: E402
 
+# Public alias for legacy ``codeagents.mode_tools.MODE_TOOLS`` callers.
+MODE_TOOLS = _MODE_TOOLS
+
 __all__ = [
     "MODE_REGISTRY",
+    "MODE_TOOLS",
     "ModeSpec",
     "allowed_permissions_for",
     "filter_for_mode",

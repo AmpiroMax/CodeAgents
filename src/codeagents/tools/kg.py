@@ -23,10 +23,10 @@ import hashlib
 import re
 from typing import Any
 
-from codeagents.kg_store import Entity, KGStore, Relation
-from codeagents.permissions import Permission
+from codeagents.stores.kg import Entity, KGStore, Relation
+from codeagents.core.permissions import Permission
 from codeagents.tools import ParamSpec, ToolRegistry, ToolSpec
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 def _kg_enabled() -> bool:
@@ -37,7 +37,7 @@ def _kg_enabled() -> bool:
     installed and the user wants minimal output noise.
     """
     try:
-        from codeagents.config import PROJECT_ROOT, load_toml
+        from codeagents.core.config import PROJECT_ROOT, load_toml
 
         raw = load_toml(PROJECT_ROOT / "config" / "models.toml")
         return bool(raw.get("research", {}).get("kg_enabled", True))
@@ -50,7 +50,7 @@ def _kg_dir(workspace: Workspace) -> "Any":
     if not chat_id:
         return None
     try:
-        from codeagents.chat_store import default_chats_dir
+        from codeagents.stores.chat import default_chats_dir
 
         return default_chats_dir() / chat_id
     except Exception:

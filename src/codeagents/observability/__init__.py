@@ -1,21 +1,41 @@
-"""Observability surface: audit / inference / runtime / service request
-logs and resource metrics.
+"""Audit / inference / runtime / request logs + resource metrics.
 
-The legacy modules still live at the package root (``codeagents.audit``,
-``codeagents.inference_log``, ``codeagents.runtime_log``,
-``codeagents.request_log``, ``codeagents.resource_metrics``,
-``codeagents.metrics_sampler``) and all four loggers funnel their JSONL
-appends through :func:`._jsonl.append_line` for consistency.
+All loggers funnel writes through :func:`._jsonl.append_line` for
+consistent NDJSON output. Modules:
 
-This ``__init__`` is intentionally minimal — re-exporting the legacy
-modules from here would create a circular load (the loggers themselves
-import :mod:`._jsonl`). Reach the helper directly::
-
-    from codeagents.observability._jsonl import append_line
-
-The legacy modules continue to be the canonical import paths; future
-work can graduate the implementations into this package without
-breaking either path.
+* :mod:`codeagents.observability.audit` — agent-decision audit log.
+* :mod:`codeagents.observability.inference_log` — model inference traces.
+* :mod:`codeagents.observability.runtime_log` — runtime client telemetry.
+* :mod:`codeagents.observability.request_log` — service-request log.
+* :mod:`codeagents.observability.metrics_sampler` — periodic resource sampler.
+* :mod:`codeagents.observability.resource_metrics` — resource snapshots.
 """
 
-# Intentionally empty. See module docstring.
+from codeagents.observability._jsonl import append_line
+from codeagents.observability.audit import AuditEvent, AuditLog
+from codeagents.observability.inference_log import InferenceLogEntry, InferenceLogger
+from codeagents.observability.metrics_sampler import MetricsSampler, get_global_sampler
+from codeagents.observability.request_log import (
+    ServiceRequestLogEntry,
+    ServiceRequestLogger,
+)
+from codeagents.observability.resource_metrics import collect_resource_snapshot
+from codeagents.observability.runtime_log import (
+    RuntimeRequestLogEntry,
+    RuntimeRequestLogger,
+)
+
+__all__ = [
+    "AuditEvent",
+    "AuditLog",
+    "InferenceLogEntry",
+    "InferenceLogger",
+    "MetricsSampler",
+    "RuntimeRequestLogEntry",
+    "RuntimeRequestLogger",
+    "ServiceRequestLogEntry",
+    "ServiceRequestLogger",
+    "append_line",
+    "collect_resource_snapshot",
+    "get_global_sampler",
+]

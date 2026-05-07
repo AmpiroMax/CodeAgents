@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.tools_native import kg as K
-from codeagents.workspace import Workspace
+from codeagents.tools import kg as K
+from codeagents.core.workspace import Workspace
 
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workspace:
     chats_root = tmp_path / "chats"
     chats_root.mkdir()
     monkeypatch.setattr(
-        "codeagents.chat_store.default_chats_dir", lambda: chats_root
+        "codeagents.stores.chat.default_chats_dir", lambda: chats_root
     )
     w = Workspace.from_path(tmp_path)
     w.chat_id = "chat-x"

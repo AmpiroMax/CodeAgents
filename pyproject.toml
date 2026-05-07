@@ -28,10 +28,11 @@ kg = [
 
 [project.scripts]
 codeagents = "codeagents.cli:main"
-codeagents-mcp = "codeagents.mcp_server:main"
+codeagents-mcp = "codeagents.surfaces.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["thirdparty*"]
 
 [tool.ruff]
 line-length = 100

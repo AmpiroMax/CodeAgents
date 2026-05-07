@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import gettempdir
 from uuid import uuid4
 
-from codeagents.resource_metrics import (
+from codeagents.observability.resource_metrics import (
     collect_resource_snapshot,
     disk_usage_bytes,
     nvidia_gpu_summary,

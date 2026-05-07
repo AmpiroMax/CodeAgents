@@ -1,7 +1,10 @@
-"""Language Server Protocol client helpers.
+"""Language Server Protocol client used by the agent.
 
 * :class:`LspManager` — long-lived per-language pool used by the agent.
-* :func:`register_lsp_tools_optional` — back-compat single-shot ``lsp_query``.
+* :class:`LspSession` — low-level JSON-RPC client (used by the manager).
+* :class:`Diagnostic` — normalized diagnostic shape returned to the model.
+* :class:`LspServerEntry` / :func:`load_lsp_servers_for_project` — config
+  loader for ``registry/lsp.toml``.
 """
 
 from codeagents.lsp.config import (
@@ -10,7 +13,6 @@ from codeagents.lsp.config import (
     load_lsp_servers_for_project,
 )
 from codeagents.lsp.diagnostics import Diagnostic
-from codeagents.lsp.integration import register_lsp_tools_optional
 from codeagents.lsp.manager import LspManager
 
 __all__ = [
@@ -19,5 +21,4 @@ __all__ = [
     "LspServerEntry",
     "load_lsp_servers",
     "load_lsp_servers_for_project",
-    "register_lsp_tools_optional",
 ]

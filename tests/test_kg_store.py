@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from codeagents.kg_store import Community, Entity, KGStore, Relation
+from codeagents.stores.kg import Community, Entity, KGStore, Relation
 
 
 def test_add_and_get_entity(tmp_path: Path) -> None:

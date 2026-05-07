@@ -3,8 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from codeagents.agent import AgentCore
-from codeagents.tools_native.code import (
+from codeagents.core.orchestrator import AgentCore
+from codeagents.tools.native_code import (
     cat,
     conda_activate,
     conda_deactivate,
@@ -22,7 +22,7 @@ from codeagents.tools_native.code import (
     tail,
     wc,
 )
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 def _workspace(path: Path) -> Workspace:

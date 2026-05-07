@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
-from codeagents.permissions import Permission
+from codeagents.core.permissions import Permission
 
 ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
 

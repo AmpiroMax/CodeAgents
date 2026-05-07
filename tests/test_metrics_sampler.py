@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from codeagents import metrics_sampler as ms
+from codeagents.observability import metrics_sampler as ms
 
 
 @pytest.fixture(autouse=True)

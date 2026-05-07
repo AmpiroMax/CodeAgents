@@ -1,11 +1,14 @@
-"""MCP surface (Stage 1 re-export shim).
+"""MCP surface: server entry point + client adapter/bridge.
 
-The MCP server entry point lives at :mod:`codeagents.mcp_server`; the
-client adapter lives at :mod:`codeagents.mcp`. Stage 4+ will move them
-under this package.
+* :mod:`codeagents.surfaces.mcp.server` — stdio MCP server exposing
+  the agent's native tool registry.
+* :mod:`codeagents.surfaces.mcp.adapter` — :class:`MCPServerSpec` and
+  the loader that reads ``registry/mcp.toml``.
+* :mod:`codeagents.surfaces.mcp.bridge` — registers MCP tools into the
+  local :class:`ToolRegistry`.
 """
 
-from codeagents import mcp_server  # noqa: F401  (re-export for new path)
-from codeagents.mcp import adapter, bridge  # noqa: F401
+from codeagents.surfaces.mcp.adapter import MCPServerSpec, load_mcp_specs
+from codeagents.surfaces.mcp.bridge import register_mcp_tools
 
-__all__ = ["adapter", "bridge", "mcp_server"]
+__all__ = ["MCPServerSpec", "load_mcp_specs", "register_mcp_tools"]

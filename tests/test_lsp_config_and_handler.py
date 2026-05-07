@@ -1,16 +1,15 @@
+"""Config loader tests for the LSP layer.
+
+The legacy single-shot ``lsp_query`` tool was removed in the honest
+refactor; only the config parser is left to test here. Manager and tool
+behaviour are covered by ``test_lsp_manager.py`` and ``test_lsp_tools.py``.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from codeagents.lsp import integration as lsp_integration
-from codeagents.lsp.config import load_lsp_servers
-from codeagents.lsp.config import LspServerEntry
-from codeagents.lsp.integration import _lsp_query_handler
-from codeagents.permissions import Permission
-from codeagents.tools import ToolRegistry, ToolSpec
-from codeagents.workspace import Workspace
+from codeagents.lsp.config import load_lsp_servers, load_lsp_servers_for_project
 
 
 def test_load_lsp_servers_missing_file(tmp_path: Path) -> None:
@@ -40,29 +39,19 @@ args = ["-v"]
     assert rows[1].enabled is False
 
 
-def test_lsp_query_handler_missing_action(tmp_path: Path) -> None:
-    ws = Workspace.from_path(tmp_path)
-    entry = LspServerEntry(name="x", enabled=True, command="true", args=[])
-    out = _lsp_query_handler(ws, [entry], {})
-    assert out.get("error") == "missing_action"
-
-
-def test_register_lsp_tools_optional_no_enabled_servers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cfg_dir = tmp_path / "config"
-    cfg_dir.mkdir()
-    (cfg_dir / "lsp.toml").write_text(
-        '[servers.z]\nenabled = false\ncommand = "true"\nargs = []\n',
+def test_load_lsp_servers_for_project_merges(tmp_path: Path) -> None:
+    """``registry/lsp.toml`` overrides ``config/lsp.toml`` by entry name."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "registry").mkdir()
+    (tmp_path / "config" / "lsp.toml").write_text(
+        '[servers.shared]\nenabled = false\ncommand = "old"\nargs = []\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(lsp_integration, "PROJECT_ROOT", tmp_path)
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="dummy", kind="native", permission=Permission.READ_ONLY, description="d"),
-        handler=lambda _a: {},
+    (tmp_path / "registry" / "lsp.toml").write_text(
+        '[servers.shared]\nenabled = true\ncommand = "new"\nargs = ["--stdio"]\n',
+        encoding="utf-8",
     )
-    lsp_integration.register_lsp_tools_optional(reg, Workspace.from_path(tmp_path))
-    names = {t.name for t in reg.list()}
-    assert "lsp_query" not in names
-    assert "dummy" in names
+    rows = load_lsp_servers_for_project(tmp_path)
+    by_name = {r.name: r for r in rows}
+    assert by_name["shared"].command == "new"
+    assert by_name["shared"].enabled is True

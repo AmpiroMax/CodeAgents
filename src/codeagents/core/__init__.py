@@ -12,9 +12,9 @@ are reachable via explicit imports — for example::
 Stage-1 cosmetic re-exports of ``AgentCore`` etc. were removed for the
 same reason; if you need them, import from their canonical location:
 
-    from codeagents.agent import AgentCore
-    from codeagents.permissions import Permission
-    from codeagents.workspace import Workspace
+    from codeagents.core.orchestrator import AgentCore
+    from codeagents.core.permissions import Permission
+    from codeagents.core.workspace import Workspace
 """
 
 # Intentionally empty. See module docstring.

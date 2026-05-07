@@ -19,7 +19,7 @@ from codeagents.tools.lsp import (
     lsp_references,
     lsp_workspace_symbol,
 )
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 class _FakeSession:

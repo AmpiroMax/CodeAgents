@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codeagents.chat_rag import ChatEmbeddingStore, index_pending_chat_messages
+from codeagents.rag.chat_embeddings import ChatEmbeddingStore, index_pending_chat_messages
 
 
 class FakeEmbedder:

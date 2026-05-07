@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from codeagents.summarisation import (
+from codeagents.core.conversation.summarisation import (
     KEEP_TAIL,
     SUMMARY_TAG_PREFIX,
     collapse_messages,

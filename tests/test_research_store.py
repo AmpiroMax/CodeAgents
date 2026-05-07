@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codeagents.research_store import (
+from codeagents.stores.research import (
     ResearchReport,
     ResearchSection,
     ResearchStore,

@@ -1,16 +1,20 @@
 """Retrieval-augmented generation: workspace indexing + per-chat embeddings.
 
-Stage 1 re-exports the existing flat modules. Stage 7 will collapse the
-flat files into this package proper.
+Modules:
+
+* :mod:`codeagents.rag.workspace_index` — sqlite-vec backed code/symbol/chunk index.
+* :mod:`codeagents.rag.chat_embeddings` — per-chat message embeddings + recall.
+* :mod:`codeagents.rag.background_worker` — async indexer driving the workspace index.
+* :mod:`codeagents.rag.kg_indexer` — knowledge-graph community indexer.
 """
 
-from codeagents.chat_rag import (
+from codeagents.rag.background_worker import WorkspaceIndexWorker
+from codeagents.rag.chat_embeddings import (
     ChatEmbeddingStore,
     RecallHit,
     index_pending_chat_messages,
 )
-from codeagents.index_worker import WorkspaceIndexWorker
-from codeagents.indexer import (
+from codeagents.rag.workspace_index import (
     ChunkRecord,
     EmbeddingClient,
     FileRecord,
@@ -32,11 +36,11 @@ __all__ = [
     "EmbeddingClient",
     "FileRecord",
     "IgnoreRules",
-    "WorkspaceIndexWorker",
     "RecallHit",
     "SearchResult",
     "SymbolRecord",
     "WorkspaceIndex",
+    "WorkspaceIndexWorker",
     "WorkspaceIndexer",
     "build_index",
     "cosine_similarity",

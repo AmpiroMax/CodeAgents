@@ -10,19 +10,19 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.agent import AgentCore
-from codeagents.chat_store import ChatStore
-from codeagents.model_service import LocalModelService
-from codeagents.request_log import ServiceRequestLogger
-from codeagents.research_store import ResearchStore
-from codeagents.server import AgentRequestHandler, ReusableThreadingHTTPServer
+from codeagents.core.orchestrator import AgentCore
+from codeagents.stores.chat import ChatStore
+from codeagents.core.runtime.service import LocalModelService
+from codeagents.observability.request_log import ServiceRequestLogger
+from codeagents.stores.research import ResearchStore
+from codeagents.surfaces.http.server import AgentRequestHandler, ReusableThreadingHTTPServer
 
 
 def _start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     chats_root = tmp_path / "chats"
     chats_root.mkdir()
     monkeypatch.setattr(
-        "codeagents.chat_store.default_chats_dir", lambda: chats_root
+        "codeagents.stores.chat.default_chats_dir", lambda: chats_root
     )
     agent = AgentCore.from_workspace(tmp_path)
 

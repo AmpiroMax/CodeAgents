@@ -18,7 +18,7 @@ from urllib.parse import unquote, urlparse
 from codeagents.lsp import LspManager
 from codeagents.lsp.diagnostics import from_lsp
 from codeagents.tools._registry import ToolRegistry
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -326,7 +326,7 @@ def register_lsp_lookup_tools(
     here. We re-register with the existing spec (the registry's merge
     keeps the description/params untouched) and pass the new handler.
     """
-    from codeagents.permissions import Permission
+    from codeagents.core.permissions import Permission
     from codeagents.tools._registry import ToolSpec
 
     pairs = [

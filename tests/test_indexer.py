@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from codeagents.indexer import (
+from codeagents.rag.workspace_index import (
     WorkspaceIndexer,
     build_index,
     index_summary,
@@ -130,9 +130,9 @@ def test_chunks_use_20_line_windows(tmp_path: Path) -> None:
 
 
 def test_search_code_tool_returns_lexical_results(tmp_path: Path) -> None:
-    from codeagents.indexer import build_index
-    from codeagents.tools_native.code import search_code
-    from codeagents.workspace import Workspace
+    from codeagents.rag.workspace_index import build_index
+    from codeagents.tools.native_code import search_code
+    from codeagents.core.workspace import Workspace
 
     (tmp_path / "auth.py").write_text(
         "def authenticate(user):\n    return True\n", encoding="utf-8"

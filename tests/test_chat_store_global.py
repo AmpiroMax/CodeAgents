@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from codeagents import __version__
-from codeagents.chat_store import HARDCODED_CHATS_DIR, ChatStore, default_chats_dir
+from codeagents.stores.chat import HARDCODED_CHATS_DIR, ChatStore, default_chats_dir
 
 
 def test_default_chats_dir_uses_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

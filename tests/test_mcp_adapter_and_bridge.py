@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from codeagents.mcp.adapter import load_mcp_specs
-from codeagents.mcp import bridge as mcp_bridge
-from codeagents.permissions import Permission
+from codeagents.surfaces.mcp.adapter import load_mcp_specs
+from codeagents.surfaces.mcp import bridge as mcp_bridge
+from codeagents.core.permissions import Permission
 from codeagents.tools import ToolRegistry, ToolSpec
 
 

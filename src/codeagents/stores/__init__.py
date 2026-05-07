@@ -1,12 +1,16 @@
 """Persistent stores for chats, plans, research reports, and the knowledge graph.
 
-Stage 1 re-exports the existing flat modules so new import paths are stable
-before content actually migrates.
+Each module owns one storage surface:
+
+* :mod:`codeagents.stores.chat` — chat sessions on disk.
+* :mod:`codeagents.stores.plan` — task plans.
+* :mod:`codeagents.stores.research` — deep-research reports.
+* :mod:`codeagents.stores.kg` — knowledge graph + Leiden communities.
 """
 
-from codeagents.chat_store import ChatStore, ChatSummary, default_chats_dir
-from codeagents.kg_store import Community, Entity, KGStore, Relation
-from codeagents.plan_store import (
+from codeagents.stores.chat import ChatStore, ChatSummary, default_chats_dir
+from codeagents.stores.kg import Community, Entity, KGStore, Relation
+from codeagents.stores.plan import (
     Plan,
     PlanLimitError,
     PlanNotFoundError,
@@ -15,7 +19,7 @@ from codeagents.plan_store import (
     PlanSummary,
     default_plans_dir,
 )
-from codeagents.research_store import ResearchReport, ResearchSection, ResearchStore
+from codeagents.stores.research import ResearchReport, ResearchSection, ResearchStore
 
 __all__ = [
     "ChatStore",

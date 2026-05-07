@@ -44,6 +44,29 @@ When `python -m codeagents.cli serve` (or equivalent) is running, **GET `/metric
 - **MCP**: enable servers under `[mcp.*]` in `registry/mcp.toml`; set `CODEAGENTS_DISABLE_MCP=1` to skip discovery. External clients can run **`codeagents-mcp`** (stdio) to call CodeAgents workspace tools; set `CODEAGENTS_WORKSPACE`.
 - **LSP**: optional `config/lsp.toml` — enable a server to register the `lsp_query` tool.
 
+## Development
+
+Run from the repo root.
+
+```bash
+# Run the test suite (one pre-existing eval test is deselected).
+python -m pytest -q --deselect tests/test_evals_manifest.py
+
+# A single file or test:
+python -m pytest -q tests/test_web_tools.py
+python -m pytest -q tests/test_web_tools.py::test_web_fetch_uses_jina_and_cache
+
+# Check that all Python sources compile (syntax-only, fast).
+python -m compileall -q src tests
+
+# Check that the package builds and imports cleanly.
+python -m pip install -e .
+python -c "import codeagents; print(codeagents.__version__)"
+
+# Smoke-check that the tool subsystems wire together.
+python -c "from codeagents.tools import native_code, web, shell, filesystem; print('ok')"
+```
+
 ## Documents
 
 - `docs/architecture.md` - system architecture and module boundaries.

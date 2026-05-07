@@ -14,7 +14,7 @@ These are exposed to the model only when ``mode=research`` (see
                                                          v
                                                  draft_section -> assemble_report
 
-All persistence goes through :mod:`codeagents.research_store`. LLM calls
+All persistence goes through :mod:`codeagents.stores.research`. LLM calls
 go through ``OpenAICompatibleRuntime`` (constructed from ``AppConfig``
 just like ``recall_chat`` does), so the tools are stateless and easy to
 unit-test by patching ``_runtime_factory``.
@@ -27,18 +27,18 @@ import re
 import time
 from typing import Any, Callable
 
-from codeagents.permissions import Permission
-from codeagents.research_store import ResearchReport, ResearchSection, ResearchStore
+from codeagents.core.permissions import Permission
+from codeagents.stores.research import ResearchReport, ResearchSection, ResearchStore
 from codeagents.tools import ParamSpec, ToolRegistry, ToolSpec
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 # ── Runtime factory (overridable from tests) ─────────────────────────
 
 
 def _default_runtime():
-    from codeagents.config import load_app_config
-    from codeagents.runtime import OpenAICompatibleRuntime
+    from codeagents.core.config import load_app_config
+    from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime
 
     cfg = load_app_config()
     return OpenAICompatibleRuntime(cfg.runtime), cfg
@@ -63,7 +63,7 @@ def reset_runtime_factory() -> None:
 
 
 def _store(workspace: Workspace) -> ResearchStore:
-    from codeagents.chat_store import default_chats_dir
+    from codeagents.stores.chat import default_chats_dir
 
     return ResearchStore(default_chats_dir())
 
@@ -87,11 +87,11 @@ def _llm_text(messages: list[dict[str, Any]]) -> str:
     runtime, cfg = _runtime_factory()
     profile_name = getattr(cfg.runtime, "model", None) or "qwen3:30b"
     try:
-        from codeagents.model_router import ModelRouter
+        from codeagents.core.runtime.router import ModelRouter
 
         model = ModelRouter(cfg).for_task("general")
     except Exception:
-        from codeagents.config import ModelProfile
+        from codeagents.core.config import ModelProfile
 
         model = ModelProfile(
             key="general",

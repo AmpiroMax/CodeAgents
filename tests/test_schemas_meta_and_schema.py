@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from codeagents.schemas import (
+from codeagents.core.schemas import (
     ChatMeta,
     FunctionParameter,
     function_parameters_from_json_schema,

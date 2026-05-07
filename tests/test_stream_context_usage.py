@@ -4,7 +4,7 @@ the typed event layer and the agent's stream forwarder.
 
 from __future__ import annotations
 
-from codeagents.stream_events import (
+from codeagents.core.stream_events import (
     StreamContextUsageEvent,
     parse_stream_event,
     stream_event_to_json,
