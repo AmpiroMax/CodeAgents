@@ -25,7 +25,7 @@
 #   num_predict      -1=∞       max tokens to generate (-1 = until EOS)
 
 [generation]
-temperature = 0.2
+temperature = 0.4
 top_p = 0.9
 top_k = 40
 min_p = 0.0

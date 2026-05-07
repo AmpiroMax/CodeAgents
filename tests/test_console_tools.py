@@ -3,8 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from codeagents.agent import AgentCore
-from codeagents.tools_native.code import (
+from codeagents.core.orchestrator import AgentCore
+from codeagents.tools.native_code import (
     cat,
     conda_activate,
     conda_deactivate,
@@ -22,7 +22,7 @@ from codeagents.tools_native.code import (
     tail,
     wc,
 )
-from codeagents.workspace import Workspace
+from codeagents.core.workspace import Workspace
 
 
 def _workspace(path: Path) -> Workspace:
@@ -62,9 +62,13 @@ def test_agent_exposes_console_tools(tmp_path: Path) -> None:
     (tmp_path / "file.txt").write_text("hello\n", encoding="utf-8")
     agent = AgentCore.from_workspace(tmp_path)
 
-    names = {tool.name for tool in agent.tools.list()}
+    # ``include_disabled=True`` because pack 7 hid most legacy console tools
+    # from the model (head/tail/wc/mkdir/mv/conda_*/git_*/python_*/...).
+    # They still exist in the registry for direct API/SDK use, just not
+    # advertised to the LLM. Tests assert *registration*, not visibility.
+    names = {tool.name for tool in agent.tools.list(include_disabled=True)}
     assert {"pwd", "ls", "cat", "grep", "head", "tail", "wc"}.issubset(names)
-    assert "web_fetch" not in names
+    assert "web_fetch" in names
     assert {
         "rm",
         "mkdir",
@@ -86,7 +90,7 @@ def test_agent_exposes_console_tools(tmp_path: Path) -> None:
     rm_spec = agent.tools.get("rm")
     pwd_spec = agent.tools.get("pwd")
     assert "Example:" in rm_spec.description
-    assert "Remove (delete)" in rm_spec.description
+    assert "rm" in rm_spec.description.lower()
     assert "Example:" in pwd_spec.description
     assert "Example:" in agent.tools.get("mkdir").description
     assert "Example:" in agent.tools.get("mv").description
@@ -142,8 +146,10 @@ def test_tool_schema_disallows_additional_properties(tmp_path: Path) -> None:
 
     specs = {spec.name: spec.to_json_schema() for spec in agent._agent_tools_as_specs()}
 
-    assert specs["mkdir"]["function"]["parameters"]["additionalProperties"] is False
-    assert "web_fetch" not in specs
+    # ``mkdir`` is now hidden (pack 7); use a kept tool to assert the
+    # additionalProperties=False contract.
+    assert specs["write_file"]["function"]["parameters"]["additionalProperties"] is False
+    assert "web_fetch" in specs
 
 
 def test_shell_approval_is_scoped_to_executable(tmp_path: Path) -> None:

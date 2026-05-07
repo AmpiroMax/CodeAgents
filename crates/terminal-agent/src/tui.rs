@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, ChatMessage, ContentBlock, StreamEvent};
+use crate::api::{ApiClient, ChatMessage, ContentBlock, StreamEvent, ToolInfo};
 use anyhow::{Context, Result};
 use crossterm::{
     event::{
@@ -158,19 +158,17 @@ fn load_profiles(api: &ApiClient) -> Vec<ModelProfile> {
         let mut profiles: Vec<ModelProfile> = Vec::new();
 
         for m in &resp.models {
-            let task = match m.get("profile").and_then(Value::as_str) {
-                Some(t) => t,
-                None => continue,
-            };
+            let task = m.profile.as_str();
+            if task.is_empty() {
+                continue;
+            }
             if !seen.insert(task.to_string()) {
                 continue;
             }
-            let display = m
-                .get("display_name")
-                .and_then(Value::as_str)
-                .unwrap_or(task);
-            let runtime = m.get("runtime_model").and_then(Value::as_str).unwrap_or("");
-            let notes = m.get("notes").and_then(Value::as_str).unwrap_or("");
+            let display = m.display_name.as_str();
+            let display = if display.is_empty() { task } else { display };
+            let runtime = m.runtime_model.as_str();
+            let notes = m.notes.as_str();
 
             let label = if !runtime.is_empty() && runtime != display {
                 format!("{display} ({runtime})")
@@ -247,7 +245,7 @@ pub struct TuiApp {
     total_visual: usize,
     show_overview: bool,
     thinking_collapsed_global: bool,
-    cached_tools: Vec<Value>,
+    cached_tools: Vec<ToolInfo>,
 }
 
 impl TuiApp {
@@ -1724,7 +1722,10 @@ impl TuiApp {
                                 self.model_idx = idx;
                             }
                         }
-                        StreamEvent::Done => {
+                        StreamEvent::Done {
+                            model,
+                            stop_reason,
+                        } => {
                             // Remove empty trailing assistant bubble (lazy
                             // creation may leave one if the stream ended right
                             // after a tool call without follow-up text).
@@ -1743,10 +1744,29 @@ impl TuiApp {
                                     }
                                 }
                             }
-                            self.status = "ready".into();
+                            self.status = if !stop_reason.is_empty() && stop_reason != "completed" {
+                                format!("ready · {stop_reason}")
+                            } else if !model.is_empty() {
+                                format!("ready · {model}")
+                            } else {
+                                "ready".into()
+                            };
                             self.pending_response = None;
                             self.scroll_offset = u16::MAX;
                             return;
+                        }
+                        StreamEvent::TerminalOutput { session_id, chunk } => {
+                            let prefix = if session_id.is_empty() {
+                                "[term] ".to_string()
+                            } else {
+                                format!("[term {session_id}] ")
+                            };
+                            self.transcript.push(ChatLine {
+                                role: Role::System,
+                                text: format!("{prefix}{chunk}"),
+                                chat_visible: true,
+                                collapsed: false,
+                            });
                         }
                         StreamEvent::Error { message } => {
                             self.push_error(&message);
@@ -1883,9 +1903,9 @@ impl TuiApp {
         )));
         lines.push(Line::from(""));
         for t in &self.cached_tools {
-            let name = t.get("name").and_then(Value::as_str).unwrap_or("?");
-            let desc = t.get("description").and_then(Value::as_str).unwrap_or("");
-            let enabled = t.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+            let name = t.name.as_str();
+            let desc = t.description.as_str();
+            let enabled = t.enabled;
             let marker = if enabled { "●" } else { "○" };
             let style = if enabled {
                 Style::default().fg(Color::Yellow)

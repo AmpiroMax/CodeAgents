@@ -33,6 +33,84 @@ flowchart TD
     AgentAPI --> Audit[Audit_Log]
 ```
 
+## Python source layout (post-honest-refactor, May 2026)
+
+Only four files now live at the package root: `__init__.py`, `_version.py`,
+`benchmark.py`, `cli.py`. Everything else is owned by a subpackage:
+
+```
+src/codeagents/
+├── cli.py                  CLI entry points (codeagents …)
+├── benchmark.py            standalone benchmarking harness
+├── core/                   agent core, runtime client, conversation, modes
+│   ├── orchestrator.py     AgentCore + lifecycle / tool dispatch / chat loop
+│   ├── routing.py          ConfirmationDecision, ToolCallResult, helpers
+│   ├── permissions.py      Permission, WorkspaceApprovalStore, policy loader
+│   ├── workspace.py        Workspace dataclass + change_root / change_cwd
+│   ├── schemas.py          Pydantic chat schemas + FunctionSpec
+│   ├── stream_events.py    NDJSON stream event union
+│   ├── chat_attachments.py per-message attachment metadata
+│   ├── config.py           AppConfig / ModelProfile / runtime settings
+│   ├── runtime/            OpenAI-compatible client, model router, services
+│   │   ├── openai_client.py · router.py · service.py
+│   ├── conversation/       per-turn helpers
+│   │   ├── auto_recall.py · summarisation.py · policies.py
+│   ├── budget/             token-budget machinery
+│   │   ├── token_counter.py · params.py
+│   └── modes/              ModeSpec + per-mode prompt resolver
+│       └── prompts.py      reads registry/prompts/modes/<mode>.json
+├── tools/                  single source of truth for native tools
+│   ├── _registry.py        ToolSpec / ParamSpec / ToolRegistry
+│   ├── _native_specs.py    descriptions + parameter schemas
+│   ├── native_code.py      remaining filesystem/shell/web handlers
+│   ├── git.py              git_diff, git_status (extracted)
+│   ├── plans.py            create_plan / patch_plan / mark_step / list_plans
+│   ├── workspace_ctl.py    cd, change_workspace
+│   ├── lsp.py              5 narrow LSP lookup tools
+│   ├── code_context.py     umbrella LSP+RAG context tool
+│   ├── pdf.py · research.py · kg.py · rag.py
+├── lsp/                    long-lived per-language LSP server pool
+│   └── manager.py · session.py · diagnostics.py · config.py
+├── rag/                    workspace + chat embeddings, background indexers
+│   └── workspace_index.py · chat_embeddings.py
+│   └── background_worker.py · kg_indexer.py
+├── stores/                 chat / plan / research / KG persistence
+│   └── chat.py · plan.py · research.py · kg.py
+├── observability/          audit + inference / runtime / request logs + metrics
+│   └── audit.py · inference_log.py · request_log.py · runtime_log.py
+│   └── metrics_sampler.py · resource_metrics.py · _jsonl.py
+├── surfaces/
+│   ├── http/               server.py + router.py (NDJSON streaming HTTP API)
+│   └── mcp/                server.py + adapter.py + bridge.py (MCP stdio)
+└── platform/               per-OS document/index location helpers
+```
+
+Hard-deleted in this refactor (backups in `thirdparty/old_dumps/2026-05-07/`):
+
+* `tools_native/` (back-compat shim)
+* `modes/` (duplicate of `core.modes`)
+* `mode_tools.py`, `system_prompts.py` (re-export shims)
+* `lsp/integration.py` (legacy single-shot `lsp_query`)
+* All formerly-flat modules (`agent.py`, `server.py`, `runtime.py`,
+  `chat_store.py`, etc.) — now live inside their subpackages.
+
+Single sources of truth:
+
+* **Native tool descriptions / parameter schemas** —
+  [`src/codeagents/tools/_native_specs.py`](../src/codeagents/tools/_native_specs.py).
+  No more parallel TOML.
+* **Mode definitions** —
+  [`src/codeagents/core/modes/__init__.py`](../src/codeagents/core/modes/__init__.py).
+  One entry per mode covers tool whitelist, permission filter and UI colour.
+* **System prompts** —
+  [`registry/prompts/modes/<mode>.json`](../registry/prompts/modes/).
+  Each file ships a ``default`` plus a ``models`` map of full per-model
+  prompts. Loader: `core/modes/prompts.py::resolve_prompt(mode, model)`.
+* **MCP server registry** —
+  [`registry/mcp.toml`](../registry/mcp.toml) (was inside ``config/tools.toml``).
+* **Default permission policy** —
+  [`registry/permissions.toml`](../registry/permissions.toml).
+
 ## Components
 
 `runtime`
@@ -86,3 +164,31 @@ Use native tools for:
 - Operations where Rust/Python implementation is simpler than running a separate MCP server.
 
 The stable internal abstraction is `ToolSpec`; MCP tools are adapted into that abstraction.
+
+## Typed streaming and chat metadata
+
+- NDJSON events are modeled in Python by [`src/codeagents/stream_events.py`](../src/codeagents/stream_events.py) (`AgentStreamEvent` union). The HTTP layer serializes with `stream_event_to_json` before writing each line.
+- [`ChatMeta`](../src/codeagents/schemas.py) describes structured `Chat.meta` fields (`mode`: `plan` | `agent` | `ask`, LSP folders, terminal session stubs). Merging uses `merge_chat_meta`.
+- Session `mode` filters native tools by `Permission` (`ask` → read-only; `plan` → read-only + propose).
+
+## MCP client and CodeAgents MCP server
+
+- [`src/codeagents/mcp/bridge.py`](../src/codeagents/mcp/bridge.py) discovers enabled servers from `[mcp.*]` in `registry/mcp.toml`, runs `tools/list` over stdio, and registers each remote tool as `mcp.<server>.<tool>` with `mcp_input_schema` for OpenAI-style payloads. Set `CODEAGENTS_DISABLE_MCP=1` to skip.
+- [`src/codeagents/mcp_server.py`](../src/codeagents/mcp_server.py) exposes native workspace tools to external MCP clients (`codeagents-mcp` entry point). Workspace root: env `CODEAGENTS_WORKSPACE`.
+
+## LSP (optional)
+
+- [`config/lsp.toml`](../config/lsp.toml): enable a server under `[servers.*]` to register the native tool `lsp_query` (`document_symbols`, `workspace_symbol`). Implementation: [`src/codeagents/lsp/`](../src/codeagents/lsp/). (Future work: this file is slated to migrate under `registry/`.)
+
+## Platform hooks (indexing, documents, evals)
+
+- [`src/codeagents/platform/`](../src/codeagents/platform/): `CodeIndexBackend` (SQLite adapter), `DocumentExtractor` / `ExtractedDocument` placeholders for PDF/vision pipelines.
+- [`evals/manifest.toml`](../evals/manifest.toml) and [`scripts/download_benchmarks.sh`](../scripts/download_benchmarks.sh): benchmark download stub.
+
+## HTTP: attachments
+
+- `POST /chat/upload` — JSON `{ "filename", "content_base64", "subdir"?: "uploads" }` writes under `<workspace>/.codeagents/<subdir>/` for future multimodal chat attachments.
+
+## Web GUI (browser)
+
+- SPA in [`gui/`](../gui/): same HTTP + NDJSON contract as the Rust TUI. Served in production at **`/ui/`** when `codeagents serve --gui-dir …` is used (bundled inside **`CodeAgents.app`**). Architecture and CORS: [`docs/gui-architecture.md`](gui-architecture.md). Optional env: `CODEAGENTS_CORS_ORIGINS` (comma-separated); empty disables CORS reflection. Launcher: [`docs/services_manager.md`](services_manager.md).

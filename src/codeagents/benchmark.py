@@ -5,9 +5,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from codeagents.config import AppConfig
-from codeagents.runtime import OpenAICompatibleRuntime, RuntimeErrorWithHint
-from codeagents.schemas import Chat
+from codeagents.core.config import AppConfig
+from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime, RuntimeErrorWithHint
+from codeagents.core.schemas import Chat
 
 
 @dataclass(frozen=True)

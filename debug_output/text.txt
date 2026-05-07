@@ -1,3 +1,0 @@
-My opinion about the current code:
-
-The project appears to be a collection of debugging utilities and model outputs. The structure is fairly flat, with most files in the `debug_output` directory. There is no clear entry point or documentation, which makes it hard to understand the intended workflow. The code likely relies on external models and data, but the logic for handling them is not visible here. Overall, the project could benefit from better organization, documentation, and a defined main script.

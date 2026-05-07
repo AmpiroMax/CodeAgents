@@ -1,0 +1,57 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.ollama.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Overview
+
+Ollama integrates with a wide range of tools.
+
+## Coding Agents
+
+Coding assistants that can read, modify, and execute code in your projects.
+
+* [Claude Code](/integrations/claude-code)
+* [Codex](/integrations/codex)
+* [Copilot CLI](/integrations/copilot-cli)
+* [OpenCode](/integrations/opencode)
+* [Droid](/integrations/droid)
+* [Goose](/integrations/goose)
+* [Pi](/integrations/pi)
+* [Pool](/integrations/pool)
+
+## Assistants
+
+AI assistants that help with everyday tasks.
+
+* [OpenClaw](/integrations/openclaw)
+* [Hermes Agent](/integrations/hermes)
+* [Claude Desktop](/integrations/claude-desktop)
+
+## IDEs & Editors
+
+Native integrations for popular development environments.
+
+* [VS Code](/integrations/vscode)
+* [Cline](/integrations/cline)
+* [Roo Code](/integrations/roo-code)
+* [JetBrains](/integrations/jetbrains)
+* [Xcode](/integrations/xcode)
+* [Zed](/integrations/zed)
+
+## Chat & RAG
+
+Chat interfaces and retrieval-augmented generation platforms.
+
+* [Onyx](/integrations/onyx)
+
+## Automation
+
+Workflow automation platforms with AI integration.
+
+* [n8n](/integrations/n8n)
+
+## Notebooks
+
+Interactive computing environments with AI capabilities.
+
+* [marimo](/integrations/marimo)

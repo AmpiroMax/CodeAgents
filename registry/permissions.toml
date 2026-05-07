@@ -1,0 +1,14 @@
+# Default permission policy applied when no per-workspace policy exists.
+# These values used to live in the ``[permissions]`` table of
+# ``config/tools.toml`` (deleted in Stage 2).
+#
+# * allow_workspace_write: writes inside the workspace need user approval
+#   when this is false.
+# * allow_network: network tools need user approval when this is false.
+# * allow_shell_dangerous: rm/mv outside the workspace etc. need approval.
+
+[permissions]
+default_mode = "propose"
+allow_workspace_write = false
+allow_network = false
+allow_shell_dangerous = false

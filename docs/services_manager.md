@@ -1,155 +1,66 @@
-# Services Manager
+# Launcher and `ca-services`
 
-`ca-services` is a separate terminal application for running and observing local inference services. It does not expose coding-agent features. Its job is to start services, show model inventory, monitor memory, and tail logs.
+## macOS app: `CodeAgents.app`
 
-## Install
-
-```bash
-scripts/install.sh
-```
-
-This installs:
-
-- `ca` - coding/chat terminal client.
-- `ca-services` - service manager for inference runtime and API.
-
-## Commands
-
-Run as a long-lived background supervisor:
-
-```bash
-ca-services daemon
-```
-
-Start Ollama and the CodeAgents API in the background:
-
-```bash
-ca-services start
-```
-
-Show service ports, PIDs, and unified-memory RSS:
-
-```bash
-ca-services status
-```
-
-Stop both services:
-
-```bash
-ca-services stop
-```
-
-Restart both services:
-
-```bash
-ca-services restart
-```
-
-List installed Ollama models and registry models that can be installed quickly:
-
-```bash
-ca-services models
-```
-
-Install a registry model:
-
-```bash
-ca-services install qwen_code_fast
-```
-
-Send a simple chat request through `ca serve`:
-
-```bash
-ca-services chat "Привет, кто ты?" --task general
-```
-
-Tail logs:
-
-```bash
-ca-services logs --limit 50
-```
-
-## What It Shows
-
-`ca-services models` shows:
-
-- Ollama models directory, usually `~/.ollama/models` or `$OLLAMA_MODELS`.
-- Total disk usage of the Ollama model store.
-- Installed models from `ollama list`.
-- Quick-install registry entries from `config/model_registry.toml`.
-
-`ca-services status` shows:
-
-- Whether Ollama listens on `:11434`.
-- Whether CodeAgents API listens on `:8765`.
-- Process RSS for both services. On Apple Silicon this is unified memory used by the processes; there is no separate user-visible VRAM pool for these local processes.
-- A small `vm_stat` snapshot for system-level memory context.
-
-## macOS App
-
-Install `CodeAgents Services.app` directly into `/Applications` with an icon:
+Primary way to run the stack without the terminal:
 
 ```bash
 scripts/install_app.sh
 ```
 
-This builds the `.app` bundle, generates `AppIcon.icns`, and copies it to `/Applications`. After install you can launch it from:
+This builds **`/Applications/CodeAgents.app`** (override with `CODEAGENTS_APP_INSTALL_DIR`), bundles:
 
-- Spotlight (`Cmd+Space`) → `CodeAgents Services`
-- Launchpad search
-- `open -a "CodeAgents Services"`
-- Finder → `/Applications/CodeAgents Services.app`
+- `ca-services` (Rust) in `Contents/Resources/`
+- built web UI (`gui/dist`) in `Contents/Resources/gui/`
+- native shell (`CodeAgents`) with **WebKit** for the chat tab
 
-If you prefer a DMG instead, run `scripts/package_dmg.sh` to get `dist/CodeAgents-Services.dmg`. The app opens a native macOS window focused on service operations and profiling.
+Behavior:
 
-Top-level actions:
+- On launch, **starts Ollama** (if not listening on `:11434`) and **`codeagents serve`** on `:8765` with:
+  - `--workspace` = `~/Documents` by default, or the folder chosen via **«Папка workspace…»** (also written to `~/.codeagents/launcher.toml` for CLI defaults).
+  - `--gui-dir` = bundled `Resources/gui` so the API serves **`http://127.0.0.1:8765/ui/`**.
+- **Чат** tab loads that URL inside the app (no need to run `npm run dev` for daily use).
+- Quitting the app runs **`ca-services stop`** (Ollama + API on the managed ports).
 
-- `Start Services`
-- `Stop Services`
-- `Restart Services`
-- `Refresh`
-- `Refresh Models`
-- `Refresh Logs`
+`Info.plist` key **`CodeAgentsRoot`** must point at the repository clone (contains `pyproject.toml`, `.venv`, `config/`). If you move the repo, reinstall the app with `scripts/install_app.sh`.
 
-The window is split into tabs:
-
-- `Overview` explains what each local service does, which port it owns, and where its logs live.
-- `Models` shows installed Ollama models, quick-install registry models, model store path, and disk usage.
-- `Profiling` shows process RSS for Ollama and CodeAgents API plus a short "who uses what" map.
-- `Logs` groups API request logs, structured inference logs, runtime request logs, and service stdout/stderr logs.
-- `Activity` shows commands triggered by the UI with timestamps.
-
-When you close the app window or quit the app, it automatically runs `ca-services stop`. This stops `ollama serve`, `ca serve`, and any supervised service daemon, so loaded local models can release their memory.
-
-The app keeps logs in:
+DMG packaging:
 
 ```bash
-.codeagents/services/app.log
-.codeagents/services/daemon.log
+scripts/package_dmg.sh
 ```
 
-You can also stop services from the repository:
+→ `dist/CodeAgents.dmg`.
+
+## CLI: `ca-services`
+
+Same binary the app uses; useful from a shell or scripts.
+
+Global flags:
+
+| Flag | Meaning |
+|------|---------|
+| `--root` | CodeAgents repository (sets cwd for venv + `python -m codeagents.cli`). |
+| `--workspace` | Agent workspace passed to `codeagents serve` (default: `~/.codeagents/launcher.toml` or `~/Documents`). |
+| `--gui-dir` | Directory with `index.html` for `/ui/` (default: `<root>/gui/dist` if present). |
+
+Commands: `start`, `stop`, `restart`, `status`, `models`, `install`, `chat`, `logs`, `chats`, `daemon` (same semantics as before).
+
+Example:
 
 ```bash
-ca-services --root /Users/ampiro/programs/CodeAgents stop
+ca-services --root /path/to/CodeAgents --workspace /path/to/project --gui-dir /path/to/CodeAgents/gui/dist start
 ```
 
-The generated app stores the project root path at build time. If you move the repository, rebuild the DMG with `scripts/package_dmg.sh`.
+TUI **`ca`** talks to `http://127.0.0.1:8765` by default; if the app (or `ca-services start`) has started the API, **`ca` works without a separate `serve` command**.
 
 ## Logs
 
-The manager writes and tails:
+Under the **repository** (not the user workspace):
 
-```bash
+```text
 .codeagents/services/ollama.log
 .codeagents/services/ca-serve.log
-.codeagents/service_requests.jsonl
-.codeagents/runtime_requests.jsonl
-.codeagents/inference.jsonl
 ```
 
-`service_requests.jsonl` records HTTP requests handled by `ca serve`.
-
-`runtime_requests.jsonl` records OpenAI-compatible requests sent from CodeAgents to the local runtime, including model name, payload, response/error, and elapsed time.
-
-`inference.jsonl` records structured `/inference/chat` and `/inference/batch` calls in the Pydantic chat format.
+Plus JSONL logs under `.codeagents/` as documented in the architecture doc.

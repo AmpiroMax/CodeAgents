@@ -32,8 +32,17 @@ struct Cli {
     #[arg(long, default_value_t = CODEAGENTS_PORT)]
     port: u16,
 
+    /// CodeAgents repository (contains pyproject.toml, .venv, gui/dist).
     #[arg(long, global = true)]
     root: Option<PathBuf>,
+
+    /// Agent workspace (project you edit). Default: ~/.codeagents/launcher.toml or ~/Documents.
+    #[arg(long, global = true)]
+    workspace: Option<PathBuf>,
+
+    /// Built web UI directory (index.html). Default: <root>/gui/dist when present.
+    #[arg(long, global = true)]
+    gui_dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -98,13 +107,18 @@ fn main() -> Result<()> {
         env::set_current_dir(root)
             .with_context(|| format!("failed to set project root to {}", root.display()))?;
     }
+    let workspace = cli
+        .workspace
+        .clone()
+        .unwrap_or_else(default_workspace_path);
+    let gui_dir = cli.gui_dir.as_deref();
     match cli.command {
-        CommandKind::Daemon => run_daemon(cli.port),
-        CommandKind::Start => start_services(cli.port),
+        CommandKind::Daemon => run_daemon(cli.port, &workspace, gui_dir),
+        CommandKind::Start => start_services(cli.port, &workspace, gui_dir),
         CommandKind::Stop => stop_services(cli.port),
         CommandKind::Restart => {
             stop_services(cli.port)?;
-            start_services(cli.port)
+            start_services(cli.port, &workspace, gui_dir)
         }
         CommandKind::Status => print_status(cli.port),
         CommandKind::Models => print_models(),
@@ -115,7 +129,53 @@ fn main() -> Result<()> {
     }
 }
 
-fn start_services(port: u16) -> Result<()> {
+fn default_workspace_path() -> PathBuf {
+    let launcher = dirs_home().join(".codeagents").join("launcher.toml");
+    if let Ok(raw) = fs::read_to_string(&launcher) {
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(eq) = line.find('=') {
+                let key = line[..eq].trim();
+                if key != "workspace" {
+                    continue;
+                }
+                let mut val = line[eq + 1..].trim();
+                if val.len() >= 2 {
+                    let b = val.as_bytes();
+                    if (b[0] == b'"' && b[b.len() - 1] == b'"')
+                        || (b[0] == b'\'' && b[b.len() - 1] == b'\'')
+                    {
+                        val = &val[1..val.len() - 1];
+                    }
+                }
+                let p = PathBuf::from(val);
+                if p.is_absolute() {
+                    return p;
+                }
+            }
+        }
+    }
+    dirs_home().join("Documents")
+}
+
+fn resolve_gui_dir(explicit: Option<&Path>) -> Option<PathBuf> {
+    if let Some(p) = explicit {
+        let p = p.to_path_buf();
+        if p.join("index.html").is_file() {
+            return Some(p);
+        }
+        return None;
+    }
+    project_root()
+        .ok()
+        .map(|r| r.join("gui").join("dist"))
+        .filter(|p| p.join("index.html").is_file())
+}
+
+fn start_services(port: u16, workspace: &Path, gui_dir: Option<&Path>) -> Result<()> {
     let root = project_root()?;
     let log_dir = root.join(".codeagents").join("services");
     fs::create_dir_all(&log_dir)?;
@@ -160,24 +220,34 @@ fn start_services(port: u16) -> Result<()> {
         } else {
             "python3".to_string()
         };
+        let gui = resolve_gui_dir(gui_dir);
+        let mut argv: Vec<String> = vec![
+            "-m".into(),
+            "codeagents.cli".into(),
+            "serve".into(),
+            "--host".into(),
+            "127.0.0.1".into(),
+            "--port".into(),
+            port.to_string(),
+            "--workspace".into(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        if let Some(ref g) = gui {
+            argv.push("--gui-dir".into());
+            argv.push(g.to_string_lossy().into_owned());
+        }
+        let argv_ref: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
         spawn_background(
             &python_bin,
-            &[
-                "-m",
-                "codeagents.cli",
-                "serve",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                "--workspace",
-                ".",
-            ],
+            &argv_ref,
             &root,
             &log_dir.join("ca-serve.log"),
         )
         .context("failed to start ca serve")?;
-        println!("started ca serve on :{port}");
+        println!("started ca serve on :{port} (workspace: {})", workspace.display());
+        if let Some(ref g) = gui {
+            println!("  web UI: http://127.0.0.1:{port}/ui/  (static dir: {})", g.display());
+        }
     } else {
         println!("ca serve already listens on :{port}");
     }
@@ -191,7 +261,7 @@ fn stop_services(port: u16) -> Result<()> {
     Ok(())
 }
 
-fn run_daemon(port: u16) -> Result<()> {
+fn run_daemon(port: u16, workspace: &Path, gui_dir: Option<&Path>) -> Result<()> {
     let root = project_root()?;
     let log_dir = root.join(".codeagents").join("services");
     fs::create_dir_all(&log_dir)?;
@@ -205,7 +275,7 @@ fn run_daemon(port: u16) -> Result<()> {
     fs::write(&pid_path, std::process::id().to_string())?;
     println!("ca-services daemon started with pid {}", std::process::id());
     loop {
-        if let Err(error) = start_services(port) {
+        if let Err(error) = start_services(port, workspace, gui_dir) {
             append_daemon_log(&format!("daemon start_services error: {error:#}"))?;
         }
         thread::sleep(Duration::from_secs(10));

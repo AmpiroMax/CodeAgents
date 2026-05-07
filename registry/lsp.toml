@@ -1,0 +1,34 @@
+# Long-lived LSP server pool.
+#
+# Each [servers.<name>] table describes one language server. The agent
+# picks the first enabled server whose `languages` list covers a file's
+# extension (see `src/codeagents/lsp/session.py::_suffix_lang`). The
+# subprocess is started lazily on the first request and shut down after
+# `idle_timeout_seconds` of inactivity.
+#
+# `enabled = false` keeps the entry on disk but skips startup. Servers
+# whose `command` is missing from PATH are silently ignored.
+
+[servers.pyright]
+enabled = false
+command = "pyright-langserver"
+args = ["--stdio"]
+languages = ["python"]
+root_markers = ["pyproject.toml", "setup.py", "setup.cfg"]
+idle_timeout_seconds = 600
+
+[servers.rust_analyzer]
+enabled = false
+command = "rust-analyzer"
+args = []
+languages = ["rust"]
+root_markers = ["Cargo.toml"]
+idle_timeout_seconds = 600
+
+[servers.tsserver]
+enabled = false
+command = "typescript-language-server"
+args = ["--stdio"]
+languages = ["typescript", "typescriptreact", "javascript", "javascriptreact"]
+root_markers = ["package.json", "tsconfig.json"]
+idle_timeout_seconds = 600

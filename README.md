@@ -38,6 +38,35 @@ python -m codeagents.cli ask "Привет, что ты умеешь?"
 
 By default the runtime expects an OpenAI-compatible server at `http://localhost:11434/v1`.
 
+When `python -m codeagents.cli serve` (or equivalent) is running, **GET `/metrics/resources`** returns a JSON snapshot of Ollama model directories on disk, loaded models via Ollama `/api/ps`, and NVIDIA GPUs when `nvidia-smi` is available.
+
+- **POST `/chat/upload`** — save a base64 file into `<workspace>/.codeagents/<subdir>/` (for GUI attachments). Body: `filename`, `content_base64`, optional `subdir` (single path segment).
+- **MCP**: enable servers under `[mcp.*]` in `registry/mcp.toml`; set `CODEAGENTS_DISABLE_MCP=1` to skip discovery. External clients can run **`codeagents-mcp`** (stdio) to call CodeAgents workspace tools; set `CODEAGENTS_WORKSPACE`.
+- **LSP**: optional `config/lsp.toml` — enable a server to register the `lsp_query` tool.
+
+## Development
+
+Run from the repo root.
+
+```bash
+# Run the test suite (one pre-existing eval test is deselected).
+python -m pytest -q --deselect tests/test_evals_manifest.py
+
+# A single file or test:
+python -m pytest -q tests/test_web_tools.py
+python -m pytest -q tests/test_web_tools.py::test_web_fetch_uses_jina_and_cache
+
+# Check that all Python sources compile (syntax-only, fast).
+python -m compileall -q src tests
+
+# Check that the package builds and imports cleanly.
+python -m pip install -e .
+python -c "import codeagents; print(codeagents.__version__)"
+
+# Smoke-check that the tool subsystems wire together.
+python -c "from codeagents.tools import native_code, web, shell, filesystem; print('ok')"
+```
+
 ## Documents
 
 - `docs/architecture.md` - system architecture and module boundaries.
@@ -48,3 +77,5 @@ By default the runtime expects an OpenAI-compatible server at `http://localhost:
 - `docs/services_manager.md` - separate `ca-services` app for launching, logging, and profiling inference services.
 - `docs/speech-future-plan.md` - ASR and speech plans only, not current implementation.
 - `docs/terminal_cli.md` - install and use the Rust `ca` terminal client.
+- `docs/references/ollama/` - mirrored Ollama docs pages (tool calling, web search, integrations) plus `llms.txt` index.
+- `docs/research/AGENT_SYSTEMS_READING_LIST.md` - curated links: MCP clones, papers, RAG/agents.

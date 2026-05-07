@@ -27,16 +27,16 @@ If '$BIN_NAME' is not found, add this to your shell config:
 
   export PATH="$INSTALL_DIR:\$PATH"
 
-Start the backend:
+macOS: install the desktop launcher (Ollama + API + web chat in one app):
 
-  $BIN_NAME serve
+  scripts/install_app.sh
 
-Or run the service manager:
+CLI service manager:
 
   $SERVICES_BIN_NAME start
   $SERVICES_BIN_NAME status
 
-Then open the terminal UI:
+Terminal UI (expects API on :8765):
 
   $BIN_NAME
 EOF

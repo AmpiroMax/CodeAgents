@@ -4,17 +4,17 @@ import argparse
 import json
 from pathlib import Path
 
-from codeagents.agent import AgentCore
-from codeagents.audit import AuditLog
+from codeagents.core.orchestrator import AgentCore
+from codeagents.observability.audit import AuditLog
 from codeagents.benchmark import load_eval_cases, run_benchmark, write_benchmark_results
-from codeagents.config import PROJECT_ROOT, load_app_config
-from codeagents.indexer import build_index, index_summary, search_index
-from codeagents.inference_log import InferenceLogger
-from codeagents.model_service import LocalModelService, RegisteredModel
-from codeagents.runtime import OpenAICompatibleRuntime, RuntimeErrorWithHint
-from codeagents.schemas import BatchInferenceRequest, Chat, InferenceRequest
-from codeagents.server import serve
-from codeagents.tools import load_tool_registry
+from codeagents.core.config import PROJECT_ROOT, load_app_config
+from codeagents.rag.workspace_index import build_index, index_summary, search_index
+from codeagents.observability.inference_log import InferenceLogger
+from codeagents.core.runtime.service import LocalModelService, RegisteredModel
+from codeagents.core.runtime.openai_client import OpenAICompatibleRuntime, RuntimeErrorWithHint
+from codeagents.core.schemas import BatchInferenceRequest, Chat, InferenceRequest
+from codeagents.surfaces.http.server import serve
+from codeagents.tools import NATIVE_TOOL_SPECS, ToolRegistry, register_native_specs
 
 
 def main() -> None:
@@ -68,6 +68,12 @@ def main() -> None:
     serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host.")
     serve_parser.add_argument("--port", type=int, default=8765, help="Bind port.")
     serve_parser.add_argument("--workspace", default=".", help="Workspace root.")
+    serve_parser.add_argument(
+        "--gui-dir",
+        default=None,
+        type=Path,
+        help="Optional directory with built web UI (index.html + assets) served at /ui/.",
+    )
 
     infer_parser = subparsers.add_parser("infer", help="Run one structured inference request.")
     infer_parser.add_argument("request", help="JSON request or path to request JSON.")
@@ -136,7 +142,12 @@ def main() -> None:
     elif args.command == "code":
         ask_code(args.prompt, workspace=Path(args.workspace), fast=args.fast)
     elif args.command == "serve":
-        serve(host=args.host, port=args.port, workspace=Path(args.workspace))
+        serve(
+            host=args.host,
+            port=args.port,
+            workspace=Path(args.workspace),
+            gui_dir=args.gui_dir,
+        )
     elif args.command == "infer":
         infer(args.request)
     elif args.command == "infer-batch":
@@ -199,7 +210,8 @@ def check_runtime() -> None:
 
 
 def list_tools() -> None:
-    registry = load_tool_registry(PROJECT_ROOT / "config" / "tools.toml")
+    registry = ToolRegistry()
+    register_native_specs(registry, NATIVE_TOOL_SPECS)
     for tool in registry.list(include_disabled=True):
         status = "enabled" if tool.enabled else "disabled"
         print(f"{tool.name}: {tool.kind}, {tool.permission}, {status}")
@@ -211,8 +223,8 @@ def ask(prompt: str, *, model_key: str | None) -> None:
     config = load_app_config()
     model = config.model(model_key)
     runtime = OpenAICompatibleRuntime(config.runtime)
-    from codeagents.agent import SYSTEM_PROMPT
-    chat = Chat.from_prompt(prompt, system=SYSTEM_PROMPT)
+    from codeagents.core.modes.prompts import resolve_prompt
+    chat = Chat.from_prompt(prompt, system=resolve_prompt("agent", model.name))
     try:
         answer = runtime.chat(model=model, chat=chat)
     except RuntimeErrorWithHint as exc:

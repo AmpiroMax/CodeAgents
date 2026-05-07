@@ -7,10 +7,10 @@ import gzip
 from pathlib import Path
 from typing import Any
 
-from codeagents.agent import AgentCore
-from codeagents.tools_native import code as code_tools
-from codeagents.tools_native.code import curl, docs_search, web_fetch, web_search
-from codeagents.workspace import Workspace
+from codeagents.core.orchestrator import AgentCore
+from codeagents.tools import web as code_tools
+from codeagents.tools.web import curl, docs_search, web_fetch, web_search
+from codeagents.core.workspace import Workspace
 
 
 def _workspace(path: Path) -> Workspace:
@@ -62,6 +62,147 @@ def test_web_search_parses_searxng_results(tmp_path: Path, monkeypatch: Any) -> 
     assert result["results"][0]["url"].startswith("https://docs.python.org")
 
 
+def test_web_search_ollama_provider(tmp_path: Path, monkeypatch: Any) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.toml").write_text(
+        """
+[ollama_search]
+api_key = "ollama-key"
+""",
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        timeout: int = 30,
+        verify_ssl_certs: bool = True,
+    ):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+        captured["data"] = json.loads((data or b"{}").decode("utf-8"))
+        body = {
+            "results": [
+                {
+                    "title": "Ollama",
+                    "url": "https://ollama.com/",
+                    "content": "Cloud models are now available...",
+                }
+            ]
+        }
+        return 200, json.dumps(body)
+
+    monkeypatch.setattr(code_tools, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(code_tools, "_LOCAL_CONFIG_CACHE", None)
+    monkeypatch.setattr(code_tools, "_http_post_text", fake_post)
+
+    workspace = _workspace(tmp_path)
+    result = web_search(workspace, {"query": "what is ollama", "provider": "ollama"})
+
+    assert result["provider"] == "ollama"
+    assert captured["url"] == "https://ollama.com/api/web_search"
+    assert captured["headers"]["Authorization"] == "Bearer ollama-key"
+    assert captured["data"] == {"query": "what is ollama", "max_results": 5}
+    assert result["results"][0]["title"] == "Ollama"
+    assert result["results"][0]["snippet"].startswith("Cloud models")
+
+
+def test_web_search_auto_round_robin_with_ollama_and_yandex(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.toml").write_text(
+        """
+[ollama_search]
+api_key = "ollama-key"
+[yandex_search]
+api_key = "yandex-key"
+folder_id = "folder"
+""",
+        encoding="utf-8",
+    )
+    posted: list[str] = []
+
+    def fake_post(
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        timeout: int = 30,
+        verify_ssl_certs: bool = True,
+    ):
+        posted.append(url)
+        if "ollama.com" in url:
+            return 200, json.dumps(
+                {"results": [{"title": "o", "url": "https://o", "content": "ok"}]}
+            )
+        html = '<html><body><a href="https://y.ru/">Yandex</a></body></html>'
+        return 200, json.dumps({"rawData": base64.b64encode(html.encode()).decode()})
+
+    monkeypatch.setattr(code_tools, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(code_tools, "_LOCAL_CONFIG_CACHE", None)
+    monkeypatch.setattr(code_tools, "_http_post_text", fake_post)
+    monkeypatch.setattr(code_tools, "_AUTO_SEARCH_RR_INDEX", {"i": 0})
+
+    workspace = _workspace(tmp_path)
+
+    first = web_search(workspace, {"query": "q1", "provider": "auto"})
+    second = web_search(workspace, {"query": "q2", "provider": "auto"})
+
+    assert first["provider"] == "ollama"
+    assert second["provider"] == "yandex"
+    assert posted[0].endswith("/api/web_search")
+    assert "yandex" in posted[1]
+
+
+def test_web_search_auto_falls_back_when_ollama_fails(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.toml").write_text(
+        """
+[ollama_search]
+api_key = "ollama-key"
+[yandex_search]
+api_key = "yandex-key"
+folder_id = "folder"
+""",
+        encoding="utf-8",
+    )
+
+    def fake_post(
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        timeout: int = 30,
+        verify_ssl_certs: bool = True,
+    ):
+        if "ollama.com" in url:
+            raise urllib.error.HTTPError(url, 500, "boom", {}, None)
+        html = '<html><body><a href="https://y.ru/">Y</a></body></html>'
+        return 200, json.dumps({"rawData": base64.b64encode(html.encode()).decode()})
+
+    monkeypatch.setattr(code_tools, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(code_tools, "_LOCAL_CONFIG_CACHE", None)
+    monkeypatch.setattr(code_tools, "_http_post_text", fake_post)
+    monkeypatch.setattr(code_tools, "_AUTO_SEARCH_RR_INDEX", {"i": 0})
+
+    workspace = _workspace(tmp_path)
+    result = web_search(
+        workspace,
+        {"query": "fallback", "provider": "auto", "retry_attempts": 1},
+    )
+
+    assert result["provider"] == "yandex"
+
+
 def test_web_search_auto_prefers_configured_yandex(tmp_path: Path, monkeypatch: Any) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -96,6 +237,70 @@ folder_id = "folder"
 
     assert result["provider"] == "yandex"
     assert calls == ["https://searchapi.api.cloud.yandex.net/v2/web/search"]
+
+
+def test_web_fetch_returns_markdown_and_raw_html(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    html = (
+        "<html><body><h1>Title</h1><p>Hello <a href='https://x.io/'>world</a></p>"
+        "</body></html>"
+    )
+
+    def fake_get(url: str, *, headers: dict[str, str] | None = None, timeout: int = 30):
+        return 200, html
+
+    monkeypatch.setattr(code_tools, "_http_get_text", fake_get)
+    workspace = _workspace(tmp_path)
+    out = web_fetch(
+        workspace,
+        {"url": "https://x.io/", "provider": "direct", "no_cache": True},
+    )
+    assert "# Title" in out["markdown"]
+    assert "Hello" in out["markdown"]
+    assert out["raw_html"].startswith("<html")
+    assert any(link["url"] == "https://x.io/" for link in out["links"])
+
+
+def test_web_fetch_ollama_provider(tmp_path: Path, monkeypatch: Any) -> None:
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    (cfg / "local.toml").write_text(
+        '[ollama_search]\napi_key = "ok"\n', encoding="utf-8"
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        timeout: int = 30,
+        verify_ssl_certs: bool = True,
+    ):
+        captured["url"] = url
+        captured["data"] = json.loads((data or b"{}").decode("utf-8"))
+        body = {
+            "title": "Ollama",
+            "content": "[Models](https://ollama.com/models) available",
+            "links": ["https://ollama.com/models"],
+        }
+        return 200, json.dumps(body)
+
+    monkeypatch.setattr(code_tools, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(code_tools, "_LOCAL_CONFIG_CACHE", None)
+    monkeypatch.setattr(code_tools, "_http_post_text", fake_post)
+
+    workspace = _workspace(tmp_path)
+    out = web_fetch(
+        workspace,
+        {"url": "https://ollama.com/", "provider": "ollama", "no_cache": True},
+    )
+    assert out["provider"] == "ollama"
+    assert "Models" in out["markdown"]
+    assert captured["url"].endswith("/api/web_fetch")
+    assert captured["data"] == {"url": "https://ollama.com/"}
 
 
 def test_web_fetch_cleans_direct_html(tmp_path: Path, monkeypatch: Any) -> None:
@@ -493,15 +698,20 @@ def test_docs_search_restricts_domain_and_fetches(tmp_path: Path, monkeypatch: A
     assert any("site%3Adocs.pytest.org" in url for url in seen_urls)
 
 
-def test_agent_exposes_web_tools_with_network_permission(tmp_path: Path) -> None:
+def test_agent_exposes_web_tools_with_safe_defaults(tmp_path: Path) -> None:
     agent = AgentCore.from_workspace(tmp_path)
-    names = {tool.name for tool in agent.tools.list()}
-
-    assert {"web_search", "docs_search", "curl"}.issubset(names)
-    assert "web_fetch" not in names
+    # Pack 7: ``curl`` and ``docs_search`` are hidden from the model but still
+    # registered. Use ``include_disabled=True`` to see them.
+    names = {tool.name for tool in agent.tools.list(include_disabled=True)}
+    assert {"web_search", "docs_search", "curl", "web_fetch"}.issubset(names)
     assert agent.tools.get("curl").permission.value == "network"
-    assert "Example:" in agent.tools.get("web_search").description
+    assert agent.tools.get("web_search").permission.value == "read_only"
+    assert agent.tools.get("docs_search").permission.value == "read_only"
+    assert agent.tools.get("web_fetch").permission.value == "read_only"
 
-    result = agent.call_tool("web_search", {"query": "python docs"})
-    assert result.confirmation_required is True
-    assert result.result["status"] == "confirmation_required"
+    # And the model-visible surface is small.
+    visible = {tool.name for tool in agent.tools.list()}
+    assert "web_search" in visible
+    assert "web_fetch" in visible
+    assert "curl" not in visible
+    assert "docs_search" not in visible

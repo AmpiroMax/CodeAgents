@@ -1,0 +1,23 @@
+# MCP servers exposed to the agent. Set ``enabled = true`` and adjust
+# ``command``/``args``/``env`` to wire a server. The bridge runs each as a
+# stdio subprocess via :mod:`codeagents.mcp.bridge`. Set the env var
+# ``CODEAGENTS_DISABLE_MCP=1`` to skip discovery entirely.
+#
+# Layout matches the legacy ``[mcp.<name>]`` tables that used to live in
+# ``config/tools.toml``; the rest of that file (native tool descriptions
+# and ``[permissions]``) moved into Python and ``registry/permissions.toml``
+# during the Stage-2 refactor.
+
+[mcp.filesystem]
+enabled = false
+command = "mcp-server-filesystem"
+args = []
+permission = "read_only"
+description = "Future MCP filesystem integration."
+
+[mcp.github]
+enabled = false
+command = "mcp-server-github"
+args = []
+permission = "network"
+description = "Future MCP GitHub integration."
