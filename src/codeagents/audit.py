@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+
+from codeagents.observability._jsonl import append_line
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,5 @@ class AuditLog:
             result_summary=result_summary,
             confirmation_required=confirmation_required,
         )
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+        append_line(self.path, json.dumps(asdict(event), ensure_ascii=False))
         return event

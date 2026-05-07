@@ -1,11 +1,6 @@
 import type { CSSProperties } from "react";
-import type { ContextUsage } from "../lib/api";
-
-const MODE_COLORS: Record<string, string> = {
-  agent: "#4ea1ff",
-  ask: "#66d685",
-  plan: "#ff9b3d",
-};
+import type { BudgetPreview, ContextUsage } from "../lib/api";
+import { MODE_COLORS } from "../lib/modeColors";
 
 function formatTokens(value: number): string {
   if (value >= 1000) {
@@ -22,28 +17,44 @@ export function StatusBar({
   healthOk,
   streamingMode,
   serverVersion,
+  modelLoading,
+  budget,
 }: {
   streaming: boolean;
   usage: ContextUsage | null;
   model?: string;
   healthOk: boolean | null;
+  /** Predicted token count for the *next* turn (Phase 2.A.5).
+   *  Polled via GET /budget/preview while the user is typing. */
+  budget?: BudgetPreview | null;
   /** Mode the *outgoing* user message was sent under. The progress dots
    *  paint themselves in that colour so switching modes mid-response
    *  doesn't recolour the bar that belongs to the previous turn. */
   streamingMode?: string;
   /** Backend build version, surfaced in place of "api ready". */
   serverVersion?: string;
+  /** When true, the badge next to the model name shows "loading…" — used
+   *  while Ollama is pulling the model into VRAM/unified memory and isn't
+   *  yet listed in ``/api/ps``. Driven by the metrics stream. */
+  modelLoading?: boolean;
 }) {
   const dotsStyle: CSSProperties | undefined =
     streamingMode && MODE_COLORS[streamingMode]
       ? ({ "--mode-accent": MODE_COLORS[streamingMode] } as CSSProperties)
       : undefined;
-  const showUsage =
-    usage && usage.context_window > 0 && usage.total_tokens >= 0;
-  const ratio = showUsage
-    ? Math.min(1, (usage!.total_tokens || 0) / (usage!.context_window || 1))
-    : 0;
-  const percent = showUsage ? Math.round(ratio * 100) : 0;
+  const ctxWindow =
+    (usage?.context_window && usage.context_window > 0
+      ? usage.context_window
+      : budget?.context_window || 0) || 0;
+  const lastPrompt =
+    (usage?.prompt_tokens && usage.prompt_tokens > 0
+      ? usage.prompt_tokens
+      : budget?.last_prompt_tokens || 0) || 0;
+  const nextEst = budget?.estimated_next || 0;
+  const showTokens = ctxWindow > 0 && (lastPrompt > 0 || nextEst > 0);
+  const warn =
+    ctxWindow > 0 &&
+    Math.max(lastPrompt, nextEst) > ctxWindow * 0.85;
   return (
     <div className="status-bar" role="status" aria-live="polite">
       <div className="status-bar-left">
@@ -70,11 +81,16 @@ export function StatusBar({
         )}
       </div>
       <div className="status-bar-right">
-        {model ? <span className="status-model">model: {model}</span> : null}
-        {showUsage ? (
-          <span className={`status-context ${ratio > 0.85 ? "warn" : ""}`}>
-            context: {percent}% ({formatTokens(usage!.total_tokens)} /{" "}
-            {formatTokens(usage!.context_window)} tok)
+        {model ? (
+          <span className="status-model">
+            model: {model}
+            {modelLoading ? " · loading…" : ""}
+          </span>
+        ) : null}
+        {showTokens ? (
+          <span className={`status-context ${warn ? "warn" : ""}`}>
+            tokens: last {formatTokens(lastPrompt)} · next ~
+            {formatTokens(nextEst || lastPrompt)} / {formatTokens(ctxWindow)}
           </span>
         ) : null}
       </div>

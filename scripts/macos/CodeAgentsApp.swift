@@ -151,8 +151,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKScript
     }
 
     private func loadChatUI() {
-        guard let url = URL(string: "http://127.0.0.1:8765/ui/") else { return }
-        webView.load(URLRequest(url: url))
+        // Show a dark "Starting CodeAgents…" splash so the user doesn't
+        // stare at a blank white WebView while ca-services boots Ollama.
+        let splash = """
+        <!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{margin:0;height:100%;background:#0d0d0d;color:#cfcfcf;
+        font-family:-apple-system,Geist,sans-serif;display:flex;
+        align-items:center;justify-content:center;flex-direction:column;}
+        .dot{width:8px;height:8px;background:#4ea1ff;margin:0 3px;
+        display:inline-block;border-radius:50%;animation:p 1s infinite;}
+        .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
+        @keyframes p{0%,100%{opacity:.3}50%{opacity:1}}
+        </style></head><body>
+        <div style="margin-bottom:14px;letter-spacing:1px;font-size:13px;">
+        Starting CodeAgents…</div>
+        <div><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+        </body></html>
+        """
+        webView.loadHTMLString(splash, baseURL: nil)
+        // Poll /health until the API answers, THEN load /ui/. Without this
+        // the WebView raced ca-services start and rendered a blank white
+        // page (WKWebView's default ERR_CONNECTION_REFUSED page) which
+        // looked like a hard crash. Cap the wait at ~30s so a truly broken
+        // backend still surfaces an error rather than spinning forever.
+        waitForHealth(remainingTries: 60) { [weak self] _ in
+            guard let self = self else { return }
+            let target = URL(string: "http://127.0.0.1:8765/ui/")!
+            self.webView.load(URLRequest(url: target))
+        }
+    }
+
+    private func waitForHealth(remainingTries: Int, completion: @escaping (Bool) -> Void) {
+        guard remainingTries > 0 else { completion(false); return }
+        guard let url = URL(string: "http://127.0.0.1:8765/health") else {
+            completion(false); return
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 1.0
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, _ in
+            let ok: Bool = {
+                guard let http = response as? HTTPURLResponse else { return false }
+                return http.statusCode == 200 && (data?.isEmpty == false)
+            }()
+            if ok {
+                DispatchQueue.main.async { completion(true) }
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self?.waitForHealth(remainingTries: remainingTries - 1, completion: completion)
+                }
+            }
+        }.resume()
     }
 
     // The web GUI calls window.close() from its Esc → Exit dialog. By

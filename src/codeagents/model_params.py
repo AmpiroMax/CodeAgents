@@ -152,11 +152,39 @@ stop = []
 """
 
 
-def ensure_params_file(model_name: str, *, temperature: float = 0.2, num_ctx: int = 8192) -> Path:
-    """Create a default params file for `model_name` if it doesn't exist. Never overwrites."""
+def _default_num_ctx_for(model_name: str, fallback: int) -> int:
+    """Pick a sensible ``num_ctx`` for newly-created TOML files based on
+    the model name. Uses the central context-window table from
+    :mod:`codeagents.token_counter` so we don't duplicate the catalogue.
+    """
+
+    try:
+        from codeagents.token_counter import DEFAULT_CONTEXT_WINDOWS
+
+        m = (model_name or "").lower()
+        if m in DEFAULT_CONTEXT_WINDOWS:
+            return DEFAULT_CONTEXT_WINDOWS[m]
+        for key, ctx in DEFAULT_CONTEXT_WINDOWS.items():
+            if key != "default" and m.startswith(key):
+                return ctx
+    except Exception:
+        pass
+    return fallback
+
+
+def ensure_params_file(model_name: str, *, temperature: float = 0.2, num_ctx: int | None = None) -> Path:
+    """Create a default params file for `model_name` if it doesn't exist. Never overwrites.
+
+    When ``num_ctx`` isn't provided, falls back to the family-aware
+    default from :mod:`codeagents.token_counter` (e.g. gemma3 -> 131072,
+    qwen3-coder -> 262144) so freshly-pulled models don't get capped at
+    the legacy 8k.
+    """
     PARAMS_DIR.mkdir(parents=True, exist_ok=True)
     path = params_path(model_name)
     if not path.exists():
+        if num_ctx is None:
+            num_ctx = _default_num_ctx_for(model_name, fallback=8192)
         path.write_text(
             _DEFAULT_TEMPLATE.format(model=model_name, temperature=temperature, num_ctx=num_ctx),
             encoding="utf-8",
@@ -187,8 +215,54 @@ def list_param_files() -> list[Path]:
 
 
 def ensure_for_models(model_names: list[str]) -> list[Path]:
-    """Pre-create param files for every supplied model name."""
-    return [ensure_params_file(name) for name in model_names]
+    """Pre-create param files for every supplied model name.
+
+    Also performs a one-shot migration: when an existing TOML still
+    carries the legacy ``num_ctx = 8192`` (the old default for ALL
+    families) but the model is actually known to support more, the
+    file is rewritten with the family-aware default. User-customised
+    values are never touched — only the exact legacy default gets
+    upgraded, and a comment is appended explaining the bump.
+    """
+    paths: list[Path] = []
+    for name in model_names:
+        path = ensure_params_file(name)
+        try:
+            _migrate_legacy_num_ctx(name, path)
+        except Exception:
+            # Migration is best-effort — never break startup.
+            pass
+        paths.append(path)
+    return paths
+
+
+def _migrate_legacy_num_ctx(model_name: str, path: Path) -> None:
+    """Bump ``num_ctx`` from the legacy 8192 default to the family
+    default if (and only if) the file still contains the legacy value.
+    """
+
+    if not path.exists():
+        return
+    try:
+        with path.open("rb") as fh:
+            raw = tomllib.load(fh)
+    except Exception:
+        return
+    gen = raw.get("generation", raw) if isinstance(raw, dict) else {}
+    current = gen.get("num_ctx") if isinstance(gen, dict) else None
+    if current != 8192:
+        return  # custom value or already migrated
+    target = _default_num_ctx_for(model_name, fallback=8192)
+    if target <= 8192:
+        return
+    text = path.read_text(encoding="utf-8")
+    new_text = text.replace(
+        f"num_ctx = 8192",
+        f"num_ctx = {target}  # auto-bumped from 8192 to family default",
+        1,
+    )
+    if new_text != text:
+        path.write_text(new_text, encoding="utf-8")
 
 
 __all__ = [

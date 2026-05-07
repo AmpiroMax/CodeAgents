@@ -41,7 +41,7 @@ By default the runtime expects an OpenAI-compatible server at `http://localhost:
 When `python -m codeagents.cli serve` (or equivalent) is running, **GET `/metrics/resources`** returns a JSON snapshot of Ollama model directories on disk, loaded models via Ollama `/api/ps`, and NVIDIA GPUs when `nvidia-smi` is available.
 
 - **POST `/chat/upload`** — save a base64 file into `<workspace>/.codeagents/<subdir>/` (for GUI attachments). Body: `filename`, `content_base64`, optional `subdir` (single path segment).
-- **MCP**: enable servers under `[mcp.*]` in `config/tools.toml`; set `CODEAGENTS_DISABLE_MCP=1` to skip discovery. External clients can run **`codeagents-mcp`** (stdio) to call CodeAgents workspace tools; set `CODEAGENTS_WORKSPACE`.
+- **MCP**: enable servers under `[mcp.*]` in `registry/mcp.toml`; set `CODEAGENTS_DISABLE_MCP=1` to skip discovery. External clients can run **`codeagents-mcp`** (stdio) to call CodeAgents workspace tools; set `CODEAGENTS_WORKSPACE`.
 - **LSP**: optional `config/lsp.toml` — enable a server to register the `lsp_query` tool.
 
 ## Documents

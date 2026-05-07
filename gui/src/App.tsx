@@ -5,14 +5,18 @@ import { CommandPalette, type PaletteCommand } from "./components/CommandPalette
 import { Composer } from "./components/Composer";
 import { ExitConfirm } from "./components/ExitConfirm";
 import { PermissionDialog } from "./components/PermissionDialog";
+import { ResearchViewer } from "./components/ResearchViewer";
 import { PlanBanner } from "./components/PlanBanner";
 import { PlanDismissConfirm } from "./components/PlanDismissConfirm";
 import { PlanViewer } from "./components/PlanViewer";
 import { SessionHeader } from "./components/SessionHeader";
+import { MetricsPanel } from "./components/MetricsPanel";
 import { StatusBar } from "./components/StatusBar";
+import { refreshIndex, subscribeMetrics } from "./lib/api";
 import { useTheme, type ThemeSetting } from "./design-system/ThemeProvider";
 import { usePersistentState } from "./hooks/usePersistentState";
 import {
+  type BudgetPreview,
   type ChatSummary,
   type ContextUsage,
   type InferenceModel,
@@ -23,7 +27,12 @@ import {
   createChat,
   defaultApiBase,
   deleteChat,
+  fetchBudgetPreview,
   fetchHealth,
+  fetchModes,
+  fetchTools,
+  type ToolInfo,
+  type ToolsByMode,
   listChats,
   listInferenceModels,
   listPlans,
@@ -47,8 +56,85 @@ import {
   type TimelineItem,
 } from "./lib/timeline";
 
-const MODES = ["agent", "plan", "ask"] as const;
+const MODES = ["agent", "plan", "ask", "research"] as const;
 type Mode = (typeof MODES)[number];
+
+/** Build the nested palette tree for "Available tools".
+ *
+ *   Available tools
+ *     → <mode>            (one row per mode, hint: tool count)
+ *         → <tool name>   (one row per tool, hint: short description)
+ *             → description / permission / kind         (info rows)
+ *             → arg <name>: <type> (required?)          (one row per param)
+ *
+ * Nothing here is truncated — descriptions are shown verbatim so the
+ * user sees exactly what the agent sees. */
+function buildToolsMenu(data: ToolsByMode | null): PaletteCommand[] {
+  if (!data) {
+    // Should be rare: the parent fetches eagerly on mount + on health-ok.
+    // We only land here if the backend is unreachable.
+    return [{ id: "tools-loading", label: "tools unavailable — backend offline" }];
+  }
+  const modes = Object.keys(data.modes);
+  return modes.map((mode) => {
+    const tools = data.modes[mode] ?? [];
+    return {
+      id: `tools-mode-${mode}`,
+      label: mode,
+      hint: `${tools.length} tools`,
+      children: () =>
+        tools.length === 0
+          ? [{ id: `tools-empty-${mode}`, label: "(no tools)" }]
+          : tools.map((tool) => ({
+              id: `tool-${mode}-${tool.name}`,
+              label: tool.name,
+              hint: tool.description.split("\n")[0].slice(0, 80),
+              children: () => buildToolDetailRows(tool),
+            })),
+    } as PaletteCommand;
+  });
+}
+
+function buildToolDetailRows(tool: ToolInfo): PaletteCommand[] {
+  const rows: PaletteCommand[] = [];
+  // Description: split on newlines so a multi-line description renders
+  // as multiple rows instead of being truncated by ``palette-label``.
+  const descLines = (tool.description || "(no description)").split("\n");
+  descLines.forEach((line, i) => {
+    rows.push({
+      id: `desc-${tool.name}-${i}`,
+      label: line || " ",
+      hint: i === 0 ? "description" : undefined,
+      wrap: true,
+    });
+  });
+  rows.push({
+    id: `perm-${tool.name}`,
+    label: tool.permission,
+    hint: "permission",
+  });
+  rows.push({
+    id: `kind-${tool.name}`,
+    label: tool.kind,
+    hint: "kind",
+  });
+  if (tool.parameters.length === 0) {
+    rows.push({ id: `noparams-${tool.name}`, label: "(no parameters)" });
+  } else {
+    for (const p of tool.parameters) {
+      const flags: string[] = [p.type];
+      if (p.required) flags.push("required");
+      if (p.enum && p.enum.length > 0) flags.push(`enum: ${p.enum.join("|")}`);
+      rows.push({
+        id: `param-${tool.name}-${p.name}`,
+        label: `${p.name} — ${p.description || "(no description)"}`,
+        hint: flags.join(" · "),
+        wrap: true,
+      });
+    }
+  }
+  return rows;
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -90,7 +176,13 @@ function AppInner() {
   const [streamItems, setStreamItems] = useState<TimelineItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [budget, setBudget] = useState<BudgetPreview | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  // Names of models currently loaded into Ollama (from /metrics/stream).
+  // Used by StatusBar to render "loading…" next to a model name that
+  // isn't yet in `/api/ps`.
+  const [loadedOllamaModels, setLoadedOllamaModels] = useState<string[]>([]);
   const [exitOpen, setExitOpen] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   // Plans subsystem state.
@@ -102,10 +194,32 @@ function AppInner() {
   // "Plans" submenu of the command palette; the banner only ever needs
   // the active subset.
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
+  // Phase 2.B.5: active deep-research report id (full-screen viewer).
+  const [activeResearchId, setActiveResearchId] = useState<string | null>(null);
+  // Per-mode tool inventory exposed to the command palette so the user
+  // can browse exactly what the agent sees (description, params,
+  // permission). Loaded lazily on first palette open.
+  const [toolsByMode, setToolsByMode] = useState<ToolsByMode | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const theme = useTheme();
 
   const base = apiBase.trim().replace(/\/$/, "");
+
+  // Phase 2.A.5: debounced poll of /budget/preview while the user is typing
+  // OR after a stream finishes (so "tokens: last X" updates immediately).
+  useEffect(() => {
+    if (!base) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void fetchBudgetPreview(base).then((b) => {
+        if (!cancelled) setBudget(b);
+      });
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [base, input, streaming]);
 
   const timelineItems = useMemo(
     () => [
@@ -180,6 +294,22 @@ function AppInner() {
     void ping();
   }, [ping]);
 
+  // Subscribe to /metrics/stream once the API base is known. The set of
+  // ollama models currently loaded into memory drives the StatusBar's
+  // "loading…" badge — when the picker's model isn't in this list we know
+  // ollama hasn't pulled it into RAM/VRAM yet.
+  useEffect(() => {
+    const unsub = subscribeMetrics(base, (snap) => {
+      const names = (snap.ollama_ps?.models || [])
+        .map((m) => (m.name || m.model || "").trim())
+        .filter(Boolean);
+      setLoadedOllamaModels(names);
+    });
+    return () => {
+      unsub();
+    };
+  }, [base]);
+
   useEffect(() => {
     void refreshChats().catch(() => setChats([]));
   }, [refreshChats]);
@@ -243,6 +373,9 @@ function AppInner() {
       if (row.type === "error") {
         setError(String(row.message ?? "stream error"));
       }
+      // No auto-open on research_progress: per UX direction, all
+      // research interaction happens in the chat itself. The viewer
+      // is only opened when the user explicitly clicks a preview card.
       // Plan tools mutate plan_store on the backend → re-pull the banner so
       // the live "n/m" count + per-step status reflect agent progress.
       const name = String(row.name ?? "");
@@ -320,7 +453,7 @@ function AppInner() {
     [applyStreamRow, base, handleAutoTitle, mode, refreshChats, selectedModel],
   );
 
-  const sendMessage = useCallback(async () => {
+  const sendMessage = useCallback(async (overrideText?: string) => {
     setError(null);
     const chat = await ensureChat();
     if (!chat) {
@@ -328,7 +461,9 @@ function AppInner() {
     }
 
     const content: WireContent[] = [];
-    const trimmed = input.trim();
+    // ``overrideText`` lets callers (e.g. clarify-answers Submit) push a
+    // synthetic user turn without racing the async ``setInput`` update.
+    const trimmed = (overrideText ?? input).trim();
     if (trimmed) {
       content.push({ type: "text", text: trimmed });
     }
@@ -524,12 +659,11 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handler);
   }, [paletteOpen, setMode]);
 
-  // Cmd/Ctrl + K (and Ctrl+P) open the palette anywhere.
+  // Cmd/Ctrl + P opens the palette anywhere.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const isPalette =
-        ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") ||
-        (event.ctrlKey && event.key.toLowerCase() === "p");
+        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p";
       if (!isPalette) {
         return;
       }
@@ -540,6 +674,43 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Tool inventory is static for the lifetime of the backend process,
+  // so we fetch eagerly. If the very first attempt loses the race with
+  // the Swift launcher's services start, retry every 2s until success.
+  // Once we have data, the effect short-circuits.
+  useEffect(() => {
+    if (!base || toolsByMode) return;
+    let cancelled = false;
+    const attempt = async () => {
+      const data = await fetchTools(base);
+      if (!cancelled && data) setToolsByMode(data);
+    };
+    void attempt();
+    const handle = window.setInterval(() => void attempt(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [base, toolsByMode]);
+
+  // Hydrate ``MODE_COLORS`` from ``GET /modes`` once the backend responds.
+  // Keeps the GUI palette in sync with ``codeagents.core.modes._MODE_COLORS``
+  // without a deploy of the frontend. Imported lazily so the initial bundle
+  // is unchanged.
+  useEffect(() => {
+    if (!base) return;
+    let cancelled = false;
+    void (async () => {
+      const data = await fetchModes(base);
+      if (cancelled || !data) return;
+      const { hydrateModes } = await import("./lib/modeColors");
+      hydrateModes(data.modes);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [base]);
+
   // Esc anywhere outside an open modal opens an Exit? confirmation.
   // The dialog itself owns Esc/Enter/Arrow handling once visible (see
   // ExitConfirm), so we only react to the *first* Esc here.
@@ -548,7 +719,7 @@ function AppInner() {
       if (event.key !== "Escape") {
         return;
       }
-      if (paletteOpen || exitOpen || planViewer || planDismiss) {
+      if (paletteOpen || exitOpen || planViewer || planDismiss || metricsOpen) {
         // Sub-modals own their own Esc handling.
         return;
       }
@@ -565,7 +736,15 @@ function AppInner() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [exitOpen, paletteOpen, planViewer, planDismiss, stopStream, streaming]);
+  }, [
+    exitOpen,
+    metricsOpen,
+    paletteOpen,
+    planViewer,
+    planDismiss,
+    stopStream,
+    streaming,
+  ]);
 
   const handleExit = useCallback(() => {
     setExitOpen(false);
@@ -622,15 +801,6 @@ function AppInner() {
       },
     }));
   }, [chats, handleDeleteChat, openChat]);
-
-  const modeCommands = useCallback((): PaletteCommand[] =>
-    MODES.map((candidate) => ({
-      id: `mode-${candidate}`,
-      label: candidate,
-      hint: candidate === mode ? "current" : undefined,
-      action: () => setMode(candidate),
-    })),
-  [mode, setMode]);
 
   const themeCommands = useCallback((): PaletteCommand[] =>
     (["dark", "light", "auto"] as const).map((candidate) => ({
@@ -720,12 +890,6 @@ function AppInner() {
         children: chatCommands,
       },
       {
-        id: "switch-mode",
-        label: "Switch mode",
-        hint: `current: ${mode}`,
-        children: modeCommands,
-      },
-      {
         id: "switch-model",
         label: "Switch model",
         hint: selectedModel || "default",
@@ -742,6 +906,28 @@ function AppInner() {
         label: "Plans",
         hint: `${allPlans.length} stored`,
         children: () => planCommands,
+      },
+      {
+        id: "metrics",
+        label: "Metrics",
+        hint: "CPU / RAM / GPU / Ollama",
+        action: () => setMetricsOpen(true),
+      },
+      {
+        id: "available-tools",
+        label: "Available tools",
+        hint: toolsByMode
+          ? `${Object.keys(toolsByMode.modes).length} modes`
+          : "loading…",
+        children: () => buildToolsMenu(toolsByMode),
+      },
+      {
+        id: "reindex-workspace",
+        label: "Reindex workspace",
+        hint: "rebuild semantic search",
+        action: () => {
+          void refreshIndex(base);
+        },
       },
     ];
     if (active?.id) {
@@ -765,18 +951,19 @@ function AppInner() {
   }, [
     active?.id,
     allPlans.length,
+    base,
     chatCommands,
     chats.length,
     createNewChat,
     handleDeleteChat,
     handleRenameChat,
     mode,
-    modeCommands,
     modelCommands,
     planCommands,
     selectedModel,
     theme.themeSetting,
     themeCommands,
+    toolsByMode,
   ]);
 
   return (
@@ -827,10 +1014,18 @@ function AppInner() {
         <StatusBar
           healthOk={healthOk}
           model={selectedModel || undefined}
+          modelLoading={
+            !!selectedModel &&
+            loadedOllamaModels.length > 0 &&
+            !loadedOllamaModels.some(
+              (m) => m === selectedModel || m.startsWith(selectedModel + ":"),
+            )
+          }
           serverVersion={serverVersion}
           streaming={streaming}
           streamingMode={streamingMode}
           usage={contextUsage}
+          budget={budget}
         />
       </main>
       <PermissionDialog
@@ -843,6 +1038,9 @@ function AppInner() {
         onClose={() => setPaletteOpen(false)}
         open={paletteOpen}
       />
+      {metricsOpen ? (
+        <MetricsPanel base={base} onClose={() => setMetricsOpen(false)} />
+      ) : null}
       <ExitConfirm
         onCancel={() => setExitOpen(false)}
         onExit={handleExit}
@@ -861,6 +1059,28 @@ function AppInner() {
         }}
         plan={planDismiss}
       />
+      {activeResearchId && active?.id ? (
+        <ResearchViewer
+          base={base}
+          chatId={active.id}
+          reportId={activeResearchId}
+          onClose={() => setActiveResearchId(null)}
+          onSubmitClarify={(payload) => {
+            // Send a synthetic user turn so the agent picks up the
+            // answers via submit_clarify_answers and continues the flow.
+            const text =
+              "skipped" in payload
+                ? `submit_clarify_answers: skipped report_id=${payload.reportId}`
+                : `Here are my clarifying answers for report ${payload.reportId}:\n${payload.answers
+                    .map((a) => `- Q: ${a.question}\n  A: ${a.answer}`)
+                    .join("\n")}`;
+            // Close the viewer right away so the user sees their turn
+            // land in the chat instead of staring at the now-stale form.
+            setActiveResearchId(null);
+            void sendMessage(text);
+          }}
+        />
+      ) : null}
       {shuttingDown ? (
         <div className="shutdown-overlay" role="alert" aria-live="assertive">
           <div className="shutdown-card">

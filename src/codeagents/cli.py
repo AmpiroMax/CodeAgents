@@ -14,7 +14,7 @@ from codeagents.model_service import LocalModelService, RegisteredModel
 from codeagents.runtime import OpenAICompatibleRuntime, RuntimeErrorWithHint
 from codeagents.schemas import BatchInferenceRequest, Chat, InferenceRequest
 from codeagents.server import serve
-from codeagents.tools import load_tool_registry
+from codeagents.tools import NATIVE_TOOL_SPECS, ToolRegistry, register_native_specs
 
 
 def main() -> None:
@@ -210,7 +210,8 @@ def check_runtime() -> None:
 
 
 def list_tools() -> None:
-    registry = load_tool_registry(PROJECT_ROOT / "config" / "tools.toml")
+    registry = ToolRegistry()
+    register_native_specs(registry, NATIVE_TOOL_SPECS)
     for tool in registry.list(include_disabled=True):
         status = "enabled" if tool.enabled else "disabled"
         print(f"{tool.name}: {tool.kind}, {tool.permission}, {status}")
@@ -222,8 +223,8 @@ def ask(prompt: str, *, model_key: str | None) -> None:
     config = load_app_config()
     model = config.model(model_key)
     runtime = OpenAICompatibleRuntime(config.runtime)
-    from codeagents.agent import SYSTEM_PROMPT
-    chat = Chat.from_prompt(prompt, system=SYSTEM_PROMPT)
+    from codeagents.core.modes.prompts import resolve_prompt
+    chat = Chat.from_prompt(prompt, system=resolve_prompt("agent", model.name))
     try:
         answer = runtime.chat(model=model, chat=chat)
     except RuntimeErrorWithHint as exc:

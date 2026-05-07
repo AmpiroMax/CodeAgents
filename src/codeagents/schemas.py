@@ -12,7 +12,7 @@ class ChatMeta(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    mode: Literal["plan", "agent", "ask", "general"] = "agent"
+    mode: Literal["plan", "agent", "ask", "research", "general"] = "agent"
     task: str = "general"
     workspace: str | None = None
     default_model: str | None = None

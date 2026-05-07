@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from codeagents.config import PROJECT_ROOT
+from codeagents.observability._jsonl import append_line
 
 
 class ServiceRequestLogEntry(BaseModel):
@@ -29,8 +30,7 @@ class ServiceRequestLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, entry: ServiceRequestLogEntry) -> None:
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(entry.model_dump_json(exclude_none=True) + "\n")
+        append_line(self.path, entry.model_dump_json(exclude_none=True))
 
     def tail(self, limit: int = 50) -> list[dict[str, Any]]:
         if not self.path.exists():

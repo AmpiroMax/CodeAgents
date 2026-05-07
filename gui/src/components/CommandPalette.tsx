@@ -11,6 +11,9 @@ export type PaletteCommand = {
   /** Optional secondary action (Ctrl/Cmd + D). Used for "delete chat". */
   onSecondary?: () => void;
   secondaryHint?: string;
+  /** When true, the label is allowed to wrap to multiple lines instead
+   * of being ellipsised. Used by info/detail rows (e.g. tool descriptions). */
+  wrap?: boolean;
 };
 
 /** Case-insensitive substring filter used by the palette and tests. */
@@ -55,6 +58,7 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   // When the parent's command list changes (e.g. new chat created), refresh
   // the root frame in-place so the palette never shows stale data.
@@ -97,6 +101,30 @@ export function CommandPalette({
   useEffect(() => {
     setActive((current) => Math.min(current, Math.max(0, filtered.length - 1)));
   }, [filtered.length]);
+
+  // Keep the highlighted row visible when navigating with the keyboard.
+  // We adjust the list's scrollTop directly instead of using
+  // ``scrollIntoView`` so only the inner <ul> moves — the surrounding
+  // backdrop / page never scroll.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const item = list.querySelectorAll<HTMLLIElement>(".palette-item")[active];
+    if (!item) {
+      return;
+    }
+    const itemTop = item.offsetTop;
+    const itemBottom = itemTop + item.offsetHeight;
+    const viewTop = list.scrollTop;
+    const viewBottom = viewTop + list.clientHeight;
+    if (itemTop < viewTop) {
+      list.scrollTop = itemTop;
+    } else if (itemBottom > viewBottom) {
+      list.scrollTop = itemBottom - list.clientHeight;
+    }
+  }, [active, filtered.length]);
 
   if (!open) {
     return null;
@@ -163,6 +191,10 @@ export function CommandPalette({
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
+              // Stop the event from bubbling to the global Esc handler,
+              // which would otherwise open the "Exit?" confirmation.
+              event.stopPropagation();
+              (event.nativeEvent as KeyboardEvent).stopImmediatePropagation?.();
               if (!popFrame()) {
                 onClose();
               }
@@ -199,7 +231,7 @@ export function CommandPalette({
           ref={inputRef}
           value={query}
         />
-        <ul className="palette-list" role="listbox">
+        <ul className="palette-list" ref={listRef} role="listbox">
           {filtered.map((command, index) => (
             <li
               aria-selected={index === active}
@@ -210,7 +242,9 @@ export function CommandPalette({
               onMouseEnter={() => setActive(index)}
               role="option"
             >
-              <span className="palette-label">
+              <span
+                className={`palette-label${command.wrap ? " wrap" : ""}`}
+              >
                 {command.label}
                 {command.children ? <span className="palette-arrow"> ›</span> : null}
               </span>

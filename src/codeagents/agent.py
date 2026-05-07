@@ -64,107 +64,65 @@ from codeagents.stream_events import (
     StreamToolCallStartEvent,
     StreamToolPendingEvent,
     StreamToolResultEvent,
+    StreamResearchProgressEvent,
 )
+
+
+# Maps research tool names to a stream "stage" tag. Phase 2.B.3.
+_RESEARCH_STAGE_BY_TOOL: dict[str, str] = {
+    "clarify_research": "clarify_ready",
+    "submit_clarify_answers": "clarify_answered",
+    "plan_research": "plan_ready",
+    "expand_query": "queries_ready",
+    "extract_facts": "facts_extracted",
+    "draft_section": "section_drafted",
+    "assemble_report": "assembled",
+}
+from codeagents.auto_recall import maybe_recall
 from codeagents.mcp.bridge import register_mcp_tools
-from codeagents.tools import ToolRegistry, ToolSpec, load_tool_registry
-from codeagents.tools_native import register_code_tools
+from codeagents.mode_tools import filter_for_mode
+from codeagents.summarisation import collapse_messages, needs_summary
+from codeagents.token_counter import TokenBudget
+from codeagents.tools import (
+    NATIVE_TOOL_SPECS,
+    ToolRegistry,
+    ToolSpec,
+    register_all_native_tools,
+    register_native_specs,
+)
 from codeagents.workspace import Workspace
 from codeagents.indexer import build_index, index_summary, search_index
 
 
 # ─── System prompt ───────────────────────────────────────────────────
+# The base prompt and per-mode addendums moved to
+# ``registry/prompts/modes/<mode>.json`` (Stage 3); see
+# :func:`codeagents.core.modes.prompts.resolve_prompt`. Only the
+# situational plan-execution addendum is still defined in code.
 
-SYSTEM_PROMPT = """\
-You are a local coding assistant with direct access to the user's file system \
-through tools. You run on the user's machine and can read, write, search, and \
-execute commands in their workspace.
+from codeagents.core.conversation.policies import EXECUTE_PLAN_SYSTEM_ADDENDUM
 
-## Capabilities
-You have tools for: reading files, writing files, editing files, searching code, \
-listing directories, finding files by pattern, running shell commands, and git operations.
-
-## Rules
-- You may emit multiple tool calls per turn. Each call returns its own
-  result (success or `{"error": "..."}`); the next turn you'll see all of
-  them and can react to any failures individually.
-- Always read a file before editing it. Never guess file contents.
-- Use edit_file for small targeted changes (replacing a specific fragment). \
-Use write_file when rewriting the entire file.
-- Use search or glob_files to locate code before modifying it.
-- Use list_directory to understand project structure when starting.
-- Use git_status and git_diff to understand the current state of changes.
-- When no tool is needed, answer the question directly in text.
-- Be concise. State uncertainty when unsure.
-- Respond in the same language the user writes in.
-
-## Tool-call JSON escaping (critical)
-Tool arguments are parsed as strict JSON. When you put code, file content, or \
-shell snippets into a string field:
-- Every backslash must be doubled: write "\\\\n", "\\\\t", "C:\\\\Users\\\\name", \
-".\\\\venv\\\\Scripts\\\\activate" — never bare "\\n" or "\\".
-- Every double-quote inside the string must be escaped: \\".
-- Newlines inside multi-line content must be the two-char sequence "\\n", not a \
-literal newline.
-A single unescaped backslash (e.g. ".venv\\Scripts") will make the runtime \
-reject the entire tool call with "invalid character in string escape code", \
-and the tool will not execute.\
-"""
-
-MODE_SYSTEM_ADDENDUM = {
-    "ask": (
-        "\n\n## Session mode: ask\n"
-        "You are in ask mode: prefer explanations and read-only inspection. "
-        "Only read-only tools are exposed; do not insist on write or shell actions."
-    ),
-    "plan": (
-        "\n\n## Session mode: plan\n"
-        "You MUST produce an actionable plan and persist it via the `create_plan` tool. "
-        "You may use any read-only tool (read_file, ls, grep, web_search, docs_search, ...) "
-        "to investigate before drafting. You may NOT call write/shell/network-write tools.\n\n"
-        "Workflow:\n"
-        "  1. Briefly think through scope, constraints, and tradeoffs out loud (this thinking "
-        "is NOT the plan itself).\n"
-        "  2. Call `create_plan` exactly once. Arguments:\n"
-        "       title   — ≤ 60 chars, descriptive (e.g. 'Add SQLite backed audit log')\n"
-        "       summary — 1–3 short paragraphs explaining context, key tradeoffs, and the "
-        "                   final shape of the change. NO numbered list here.\n"
-        "       steps   — ordered list of {title, detail} objects. ``title`` is a short "
-        "                   verb-led step (≤ 8 words). ``detail`` describes the substep, "
-        "                   files involved, what 'done' looks like.\n"
-        "  3. After create_plan, give the user a short message: 'Plan saved as: <title>. "
-        "Click Build to execute, or refine via patch_plan.' Do NOT execute the steps yourself "
-        "in plan mode — wait for Build.\n\n"
-        "Up to 3 plans can be active at once; if create_plan returns a limit error, ask "
-        "the user to reject one first.\n"
-    ),
-}
-
-
-EXECUTE_PLAN_SYSTEM_ADDENDUM = (
-    "\n\n## Plan execution\n"
-    "There is one or more active plans pinned to this chat. Treat each step in order:\n"
-    "  - Before starting step N, call `mark_step(plan_id, step_n=N, status='in_progress')`.\n"
-    "  - Do the work using whatever tools are needed (write_file, run_command, etc.).\n"
-    "  - When the step is finished, call `mark_step(..., status='done')` (or 'skipped' "
-    "with a brief note explaining why).\n"
-    "  - Then move on to the next step. Do NOT pause between steps; finish the entire "
-    "plan unless the user explicitly tells you to stop.\n"
-    "  - If the live work makes the plan stale, call `patch_plan` to revise the remaining "
-    "steps before continuing.\n"
-    "If a plan is already partially done (some steps marked done), pick up at the first "
-    "step whose status is NOT 'done' or 'skipped'.\n"
-)
+# TODO(stage-5 follow-up): the body of :meth:`AgentCore.complete_chat_stream`
+# is still ~700 LOC. The natural next move is to extract it into
+# ``core/conversation/loop.py`` with a small ``ConversationContext``
+# dataclass capturing the per-turn state (chat, mode, model, audit,
+# token budget, runtime). Skipped here because the method threads
+# dozens of ``self.*`` references and a safe carve-out warrants its
+# own focused PR.
 
 CODING_TASKS = {"code", "coding", "edit", "fast"}
 
 
 def _allowed_permissions_for_mode(mode: str) -> set[Permission] | None:
-    """None means all enabled tools; otherwise restrict by tool permission."""
-    if mode == "ask":
-        return {Permission.READ_ONLY}
-    if mode == "plan":
-        return {Permission.READ_ONLY, Permission.PROPOSE}
-    return None
+    """None means all enabled tools; otherwise restrict by tool permission.
+
+    Thin wrapper around :func:`codeagents.core.modes.allowed_permissions_for`
+    kept for back-compat (the ``server.py`` ``/tools`` handler imports it
+    by this name).
+    """
+    from codeagents.core.modes import allowed_permissions_for
+
+    return allowed_permissions_for(mode)
 
 
 @dataclass(frozen=True)
@@ -185,16 +143,25 @@ class AgentCore:
         self.workspace = workspace
         self.config = config or load_app_config()
         self.policy = policy or load_permission_policy(
-            PROJECT_ROOT / "config" / "tools.toml"
+            PROJECT_ROOT / "registry" / "permissions.toml"
         )
         self.approvals = WorkspaceApprovalStore(workspace.root)
         self.router = ModelRouter(self.config)
         self.runtime = OpenAICompatibleRuntime(self.config.runtime)
         self.audit = AuditLog(workspace.root / ".codeagents" / "audit.jsonl")
-        self.tools = load_tool_registry(PROJECT_ROOT / "config" / "tools.toml")
-        register_code_tools(self.tools, workspace)
-        register_mcp_tools(self.tools, PROJECT_ROOT / "config" / "tools.toml")
+        self.lsp = self._build_lsp_manager(workspace)
+        self.tools = ToolRegistry()
+        register_native_specs(self.tools, NATIVE_TOOL_SPECS)
+        register_all_native_tools(self.tools, workspace, lsp=self.lsp)
+        register_mcp_tools(self.tools, PROJECT_ROOT / "registry" / "mcp.toml")
         self._tool_specs_cache: dict[str | None, list[FunctionSpec]] = {}
+        self.token_budget = TokenBudget.for_workspace(workspace.root)
+        # Last observed real prompt_tokens, surfaced via /budget/preview
+        # so the GUI can show "tokens: last X · next ~Y / ctx".
+        self._last_prompt_tokens: int = 0
+        self._last_context_window: int = 0
+        self._last_estimate: int = 0
+        self._last_model: str = ""
         # React to change_workspace tool calls: refresh per-workspace state.
         workspace.on_root_change.append(self._on_workspace_root_change)
 
@@ -203,6 +170,34 @@ class AgentCore:
         self.approvals = WorkspaceApprovalStore(workspace.root)
         self.audit = AuditLog(workspace.root / ".codeagents" / "audit.jsonl")
         self._tool_specs_cache.clear()
+        try:
+            old = getattr(self, "lsp", None)
+            if old is not None:
+                old.shutdown_all()
+        except Exception:
+            pass
+        self.lsp = self._build_lsp_manager(workspace)
+
+    @staticmethod
+    def _build_lsp_manager(workspace: Workspace):
+        """Construct an :class:`LspManager` for ``workspace`` (None on failure)."""
+        try:
+            from codeagents.lsp import LspManager, load_lsp_servers_for_project
+
+            entries = load_lsp_servers_for_project(PROJECT_ROOT)
+            if not entries:
+                return None
+            return LspManager(workspace.root, entries)
+        except Exception:
+            return None
+
+    def shutdown(self) -> None:
+        """Best-effort cleanup; safe to call multiple times."""
+        try:
+            if getattr(self, "lsp", None) is not None:
+                self.lsp.shutdown_all()
+        except Exception:
+            pass
 
     def reroot(self, path: Path | str) -> Workspace:
         """Public helper to switch the workspace root programmatically."""
@@ -214,11 +209,13 @@ class AgentCore:
         return cls(workspace=Workspace.from_path(path))
 
     def chat(self, prompt: str, *, task: str | None = "general") -> str:
+        from codeagents.core.modes.prompts import resolve_prompt
+
         model = self.router.for_task(task)
         enriched_prompt = self._with_workspace_context(prompt, task=task)
         chat = Chat.from_prompt(
             enriched_prompt,
-            system=SYSTEM_PROMPT,
+            system=resolve_prompt("agent", getattr(model, "name", None)),
             meta={"task": task or "general"},
         )
         return self.runtime.chat(model=model, chat=chat)
@@ -273,12 +270,50 @@ class AgentCore:
         tools = (
             list(chat.functions)
             if chat.functions
-            else self._agent_tools_as_specs(allowed_permissions=allowed)
+            else self._agent_tools_as_specs(allowed_permissions=allowed, mode=mode)
         )
         chat = self._ensure_system_prompt(chat, mode=mode, model_name=model_name)
 
         messages = chat.to_openai_messages()
         tool_schemas = [t.to_json_schema() for t in tools] if tools else None
+
+        # ── Auto chat-RAG (Phase 2.A.3) ──
+        # On every turn, if history is long enough, ask the per-chat
+        # embedding store for relevant earlier messages and inject them
+        # as a hidden ``system`` block right before the latest user msg.
+        try:
+            self._inject_auto_recall(messages)
+        except Exception:
+            pass
+
+        # ── Summarisation cap (Phase 2.A.4) ──
+        # If our pre-call estimate exceeds 0.85 * ctx_window we collapse
+        # everything between the head system block and the recent tail
+        # into a single "[summary vN]" system message.
+        try:
+            ctx_window = self.token_budget.context_window(model_name)
+            estimate = self.token_budget.estimate(
+                model=model_name, messages=messages, tools=tool_schemas
+            )
+            self._last_estimate = estimate
+            self._last_context_window = ctx_window
+            self._last_model = model_name
+            if needs_summary(estimated_tokens=estimate, ctx_window=ctx_window):
+                result = collapse_messages(
+                    messages,
+                    summarise=lambda corpus: self._summarise_corpus(corpus, model=model),
+                )
+                if result.applied:
+                    messages = result.new_messages
+                    yield StreamNoticeEvent(
+                        level="info",
+                        message=(
+                            f"context cap hit ({estimate}/{ctx_window} tokens) — "
+                            f"collapsed {result.dropped} older messages into a summary."
+                        ),
+                    )
+        except Exception:
+            pass
 
         yield StreamModelInfoEvent(model=model_name)
 
@@ -289,6 +324,47 @@ class AgentCore:
             full_content = ""
             had_thinking = False
             collected_tool_calls: list[dict[str, Any]] = []
+            # Captured runtime error (e.g. HTTP 500 "invalid JSON in tool
+            # call"). When set, we feed it back to the model as a
+            # corrective nudge instead of stalling the chat.
+            stream_error_msg: str | None = None
+
+            # ── Per-turn summarisation cap ──
+            # The initial cap-check at the top of complete_chat_stream
+            # only runs once. Inside this loop the agent can fire dozens
+            # of tool calls, each appending tool_result rows to
+            # ``messages`` — without this gate the prompt would balloon
+            # past num_ctx and ollama would silently truncate from the
+            # head (losing the system prompt + earliest user turn).
+            try:
+                ctx_window_now = self.token_budget.context_window(model_name)
+                estimate_now = self.token_budget.estimate(
+                    model=model_name, messages=messages, tools=tool_schemas
+                )
+                self._last_estimate = estimate_now
+                if ctx_window_now:
+                    self._last_context_window = ctx_window_now
+                if needs_summary(
+                    estimated_tokens=estimate_now, ctx_window=ctx_window_now
+                ):
+                    result = collapse_messages(
+                        messages,
+                        summarise=lambda corpus: self._summarise_corpus(
+                            corpus, model=model
+                        ),
+                    )
+                    if result.applied:
+                        messages = result.new_messages
+                        yield StreamNoticeEvent(
+                            level="info",
+                            message=(
+                                f"context cap hit mid-turn "
+                                f"({estimate_now}/{ctx_window_now} tokens) — "
+                                f"collapsed {result.dropped} older messages."
+                            ),
+                        )
+            except Exception:
+                pass
 
             for event in self.runtime.chat_stream(
                 model=model,
@@ -321,14 +397,69 @@ class AgentCore:
                         name=str(event.get("name", "")),
                     )
                 elif etype == "context_usage":
+                    real_pt = int(event.get("prompt_tokens", 0) or 0)
+                    cw = int(event.get("context_window", 0) or 0)
+                    if real_pt > 0:
+                        self._last_prompt_tokens = real_pt
+                        if cw > 0:
+                            self._last_context_window = cw
+                        # Calibrate the local TokenBudget against the real
+                        # prompt_eval_count reported by the runtime.
+                        if self._last_estimate > 0:
+                            self.token_budget.record(
+                                model=self._last_model or model_name,
+                                predicted=self._last_estimate,
+                                actual=real_pt,
+                            )
                     yield StreamContextUsageEvent(
-                        prompt_tokens=int(event.get("prompt_tokens", 0) or 0),
+                        prompt_tokens=real_pt,
                         completion_tokens=int(event.get("completion_tokens", 0) or 0),
                         total_tokens=int(event.get("total_tokens", 0) or 0),
-                        context_window=int(event.get("context_window", 0) or 0),
+                        context_window=cw,
                     )
                 elif etype == "error":
-                    yield StreamErrorEvent(message=str(event.get("message", "")))
+                    msg = str(event.get("message", ""))
+                    stream_error_msg = msg
+                    yield StreamErrorEvent(message=msg)
+
+            # Recover from runtime-level errors (most importantly HTTP 500
+            # "model produced invalid JSON in a tool call") by feeding the
+            # error message back to the model as a corrective nudge so the
+            # chat doesn't simply stall with a red banner.
+            if stream_error_msg and not collected_tool_calls and not full_content.strip():
+                if auto_continues_used >= max_auto_continues:
+                    yield StreamDoneEvent(model=model_name, stop_reason="error")
+                    return
+                auto_continues_used += 1
+                is_tool_json_error = "invalid JSON in a tool call" in stream_error_msg
+                if is_tool_json_error:
+                    nudge = (
+                        "Your previous tool call failed because its JSON "
+                        "arguments were malformed. Runtime said: "
+                        f"{stream_error_msg}\n\n"
+                        "RETRY the same tool call, but make sure every "
+                        "string argument is valid JSON:\n"
+                        "  - backslashes must be doubled (\\\\)\n"
+                        "  - double quotes must be escaped (\\\")\n"
+                        "  - newlines must be \\n, tabs \\t.\n"
+                        "Do NOT change the tool name or the intent — just "
+                        "fix the escaping and call it again."
+                    )
+                else:
+                    nudge = (
+                        "Your previous turn errored out at the runtime level: "
+                        f"{stream_error_msg}\n\nRetry the action."
+                    )
+                yield StreamNoticeEvent(
+                    level="info",
+                    message=(
+                        f"Auto-continue ({auto_continues_used}/{max_auto_continues}): "
+                        f"{'tool-call JSON error' if is_tool_json_error else 'runtime error'}"
+                    ),
+                )
+                messages.append({"role": "assistant", "content": ""})
+                messages.append({"role": "user", "content": nudge})
+                continue
 
             # Auto-continue when the model produced an empty turn (no text and
             # no tool calls). This happens with reasoning models that "think"
@@ -518,6 +649,29 @@ class AgentCore:
                     result=result_text,
                     tool_call_id=tc["_id"],
                 )
+                # Phase 2.B.3: surface research progress to the GUI without
+                # making it parse tool result JSON.
+                stage = _RESEARCH_STAGE_BY_TOOL.get(name)
+                if stage and isinstance(result_value := locals().get("result_value"), dict):
+                    if "error" not in result_value:
+                        try:
+                            yield StreamResearchProgressEvent(
+                                chat_id=self.workspace.chat_id or "",
+                                report_id=str(result_value.get("report_id", "")),
+                                stage=stage,
+                                section_idx=(
+                                    int(result_value["section_idx"])
+                                    if isinstance(result_value.get("section_idx"), int)
+                                    else None
+                                ),
+                                detail={
+                                    k: v
+                                    for k, v in result_value.items()
+                                    if k in {"status", "title", "count", "sections", "sources"}
+                                },
+                            )
+                        except Exception:
+                            pass
                 messages.append(
                     {
                         "role": "tool",
@@ -574,23 +728,22 @@ class AgentCore:
         mode: str = "agent",
         model_name: str | None = None,
     ) -> Chat:
-        """Prepend the system prompt if the chat doesn't already have one."""
-        from codeagents.system_prompts import system_prompt_addendum
+        """Prepend the system prompt if the chat doesn't already have one.
 
-        # Stack: model-specific addendum (per-mode override) + mode-level
-        # behavioural rules + (optionally) plan-execution rules. Order
-        # matters: model-specific lines sit closest to the base prompt so
-        # they read as "who you are", while plan-execution sits last as
-        # "what to do right now".
-        addendum = ""
-        model_block = system_prompt_addendum(model_name, mode)
-        if model_block:
-            addendum += "\n\n## Model profile\n" + model_block
-        addendum += MODE_SYSTEM_ADDENDUM.get(mode, "")
+        The resolved prompt is the FULL system message for the active
+        ``(mode, model)`` pair (see
+        :func:`codeagents.core.modes.prompts.resolve_prompt`). The only
+        thing layered on top is the plan-execution addendum, which is
+        situational.
+        """
+        from codeagents.core.modes.prompts import resolve_prompt
+
+        base_prompt = resolve_prompt(mode, model_name)
+        situational = ""
         if mode != "plan" and self._has_active_plan_for_chat(chat):
-            addendum += EXECUTE_PLAN_SYSTEM_ADDENDUM
+            situational += EXECUTE_PLAN_SYSTEM_ADDENDUM
         if chat.messages and chat.messages[0].role == "system":
-            if not addendum:
+            if not situational:
                 return chat
             first = chat.messages[0]
             if isinstance(first, SystemMessage) and first.content:
@@ -598,7 +751,7 @@ class AgentCore:
                 if isinstance(c0, TextContent):
                     new_first = SystemMessage(
                         index=first.index,
-                        content=[TextContent(text=c0.text + addendum)],
+                        content=[TextContent(text=c0.text + situational)],
                     )
                     return Chat(
                         messages=[new_first, *chat.messages[1:]],
@@ -608,7 +761,7 @@ class AgentCore:
             return chat
         sys_msg = SystemMessage(
             index=0,
-            content=[TextContent(text=SYSTEM_PROMPT + addendum)],
+            content=[TextContent(text=base_prompt + situational)],
         )
         return Chat(
             messages=[sys_msg, *chat.messages],
@@ -632,15 +785,109 @@ class AgentCore:
             return False
         return False
 
+    def _summarise_corpus(self, corpus: str, *, model: Any) -> str:
+        """Run a short non-streaming summary call. Used by collapse_messages."""
+        from codeagents.summarisation import SUMMARY_PROMPT
+
+        msgs = [
+            {"role": "system", "content": SUMMARY_PROMPT},
+            {"role": "user", "content": corpus},
+        ]
+        try:
+            stream = self.runtime.chat_stream(model=model, messages=msgs)
+            buf: list[str] = []
+            for ev in stream:
+                if ev.get("type") == "delta":
+                    buf.append(str(ev.get("content", "")))
+            return "".join(buf).strip()
+        except Exception:
+            return ""
+
+    def _inject_auto_recall(self, messages: list[dict[str, Any]]) -> None:
+        """Insert a hidden auto-recall system block before the last user msg.
+
+        No-op when:
+          * the chat is too short (< auto_recall.MIN_HISTORY messages),
+          * there's no active chat folder yet,
+          * the embedding client is unavailable / offline,
+          * no message scored above the threshold.
+        """
+        # Find the latest user message text.
+        last_user: str = ""
+        last_user_idx: int = -1
+        for i in range(len(messages) - 1, -1, -1):
+            m = messages[i]
+            if m.get("role") == "user":
+                content = m.get("content")
+                if isinstance(content, str):
+                    last_user = content
+                elif isinstance(content, list):
+                    parts: list[str] = []
+                    for c in content:
+                        if isinstance(c, dict) and isinstance(c.get("text"), str):
+                            parts.append(c["text"])
+                        elif isinstance(c, str):
+                            parts.append(c)
+                    last_user = "\n".join(parts)
+                last_user_idx = i
+                break
+        if last_user_idx < 0 or not last_user.strip():
+            return
+
+        chat_id = (self.workspace.chat_id or "").strip()
+        chat_dir: Path | None = None
+        if chat_id:
+            try:
+                from codeagents.chat_store import default_chats_dir
+
+                chat_dir = default_chats_dir() / chat_id
+            except Exception:
+                chat_dir = None
+
+        result = maybe_recall(
+            chat_dir=chat_dir,
+            history_len=len(messages),
+            last_user_text=last_user,
+            embedding_client=self.runtime,
+            embedding_model=self.config.runtime.embedding_model or None,
+        )
+        if not result.system_text:
+            return
+
+        # NOTE: keep keys to {role, content} only - some OpenAI-compatible
+        # backends reject unknown fields. Track auto-recall in the audit log
+        # below rather than annotating the message itself.
+        messages.insert(last_user_idx, {"role": "system", "content": result.system_text})
+        try:
+            self.audit.record(
+                tool_name="auto_recall",
+                permission="read_only",
+                arguments={"hit_count": result.hit_count, "top_score": result.top_score},
+                result_summary=f"injected {result.hit_count} hits ({result.estimate_chars} chars)",
+                confirmation_required=False,
+            )
+        except Exception:
+            pass
+
     def _agent_tools_as_specs(
-        self, *, allowed_permissions: set[Permission] | None = None
+        self,
+        *,
+        allowed_permissions: set[Permission] | None = None,
+        mode: str | None = None,
     ) -> list[FunctionSpec]:
-        """Convert registered tools into FunctionSpec with proper JSON Schema parameters."""
+        """Convert registered tools into FunctionSpec with proper JSON Schema parameters.
+
+        ``mode`` (Phase 2.A.2) further trims the visible toolbox via
+        ``mode_tools.filter_for_mode``. ``allowed_permissions`` is the
+        permission-level filter that already existed.
+        """
         cache_key = (
             "__all__"
             if allowed_permissions is None
             else ",".join(sorted(p.value for p in allowed_permissions))
         )
+        if mode:
+            cache_key = f"{cache_key}|mode={mode}"
         cached = self._tool_specs_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -672,6 +919,8 @@ class AgentCore:
                     parameters=params,
                 )
             )
+        if mode:
+            specs = filter_for_mode(mode, specs)
         self._tool_specs_cache[cache_key] = specs
         return specs
 

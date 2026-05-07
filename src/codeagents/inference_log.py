@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from codeagents.config import PROJECT_ROOT
+from codeagents.observability._jsonl import append_line
 from codeagents.schemas import InferenceRequest, InferenceResponse
 
 
@@ -27,8 +28,7 @@ class InferenceLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, entry: InferenceLogEntry) -> None:
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(entry.model_dump_json(exclude_none=True) + "\n")
+        append_line(self.path, entry.model_dump_json(exclude_none=True))
 
     def record_success(
         self,

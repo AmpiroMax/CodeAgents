@@ -391,19 +391,12 @@ textarea {
    bar colour shifts with mode, and only on the message it belongs to. */
 .timeline-message-user {
   padding: 10px 14px 10px 14px;
-  border-left: var(--mode-bar-width) solid var(--border);
+  /* The accent comes from the shared [data-mode] block; this element
+     carries its own data-mode so old messages keep their original
+     colour even when the active mode changes. */
+  border-left: var(--mode-bar-width) solid var(--mode-accent, var(--border));
   background: var(--surface);
   border-radius: 0;
-}
-
-.timeline-message-user[data-mode="agent"] {
-  border-left-color: #4ea1ff;
-}
-.timeline-message-user[data-mode="ask"] {
-  border-left-color: #66d685;
-}
-.timeline-message-user[data-mode="plan"] {
-  border-left-color: #ff9b3d;
 }
 
 .timeline-message-assistant {
@@ -730,21 +723,10 @@ textarea {
   align-items: end;
   padding: 10px 12px 10px calc(12px + var(--mode-bar-width));
   border: 1px solid var(--border);
-  border-left: var(--mode-bar-width) solid var(--border);
+  /* Left bar tracks the current mode via the shared [data-mode] block. */
+  border-left: var(--mode-bar-width) solid var(--mode-accent, var(--border));
   border-radius: 0;
   background: var(--surface);
-}
-
-/* Per-mode left bar (mirrors the user-message bar). The rest of the border
-   stays neutral so the colour doesn't flash across the whole composer. */
-.composer-box[data-mode="agent"] {
-  border-left-color: #4ea1ff;
-}
-.composer-box[data-mode="ask"] {
-  border-left-color: #66d685;
-}
-.composer-box[data-mode="plan"] {
-  border-left-color: #ff9b3d;
 }
 
 .composer-box textarea {
@@ -1127,6 +1109,19 @@ textarea {
   white-space: nowrap;
 }
 
+/* Tool-detail rows (description, params) opt into multi-line rendering
+   via PaletteCommand.wrap so the agent's full text isn't truncated. */
+.palette-label.wrap {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.palette-item:has(.palette-label.wrap) {
+  align-items: flex-start;
+}
+
 .palette-hint {
   color: var(--text-dim);
   font-family: var(--mono);
@@ -1379,26 +1374,31 @@ textarea {
   color: var(--text-muted);
 }
 
-/* Per-mode accent. ``--mode-accent`` is consumed by the progress dots and
-   the MODE badge. Colours match opencode's mode palette: agent=blue,
-   plan=orange, ask=green. The user-message and composer left-bars below
-   reuse the same hex codes literally so the three are kept in sync. */
-.desktop-shell[data-mode="agent"] {
+/* Single source of truth for mode accent colours.
+   Any element with ``data-mode="..."`` (the desktop shell, individual
+   user messages, the composer, the MODE badge, etc.) automatically
+   picks up the right ``--mode-accent`` / ``--mode-soft`` /
+   ``--mode-strong`` triple via inheritance. To add a new mode, only
+   this block needs editing — keep StatusBar's MODE_COLORS in sync. */
+[data-mode="agent"] {
   --mode-accent: #4ea1ff;
   --mode-soft: rgba(78, 161, 255, 0.14);
   --mode-strong: rgba(78, 161, 255, 0.45);
 }
-
-.desktop-shell[data-mode="ask"] {
+[data-mode="ask"] {
   --mode-accent: #66d685;
   --mode-soft: rgba(102, 214, 133, 0.14);
   --mode-strong: rgba(102, 214, 133, 0.45);
 }
-
-.desktop-shell[data-mode="plan"] {
+[data-mode="plan"] {
   --mode-accent: #ff9b3d;
   --mode-soft: rgba(255, 155, 61, 0.14);
   --mode-strong: rgba(255, 155, 61, 0.45);
+}
+[data-mode="research"] {
+  --mode-accent: #ff5fb0;
+  --mode-soft: rgba(255, 95, 176, 0.14);
+  --mode-strong: rgba(255, 95, 176, 0.45);
 }
 
 /* Composer keeps a neutral border; only the left mode-bar shifts colour when
@@ -1434,3 +1434,173 @@ textarea {
     padding-inline: 14px;
   }
 }
+
+/* Metrics overlay (cmd+k → metrics) */
+.metrics-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.metrics-panel {
+  width: min(640px, 96vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--surface, #181818);
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  border-radius: 6px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.metrics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle, #2a2a2a);
+  font-size: 13px;
+}
+.metrics-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  font-size: 18px;
+}
+.metrics-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 14px; }
+.metrics-row { display: flex; flex-direction: column; gap: 6px; }
+.metrics-label { font-size: 12px; color: var(--text-muted, #999); font-variant-numeric: tabular-nums; }
+.metrics-spark { width: 100%; display: block; }
+.metrics-list { margin: 0; padding-left: 18px; font-size: 12px; }
+.metrics-list li.muted { color: var(--text-muted, #888); list-style: none; padding-left: 0; margin-left: -18px; }
+
+/* ── Phase 2.B.5: ResearchViewer & ResearchPreviewCard ─────────── */
+.research-preview-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2, #1a1a1a);
+  border: 1px solid var(--surface-3, #2a2a2a);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 6px 0;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+.research-preview-card:hover {
+  border-color: var(--accent, #4ea1ff);
+}
+.research-preview-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.research-preview-card-meta {
+  font-size: 11px;
+  opacity: 0.75;
+  display: flex;
+  gap: 6px;
+}
+
+.research-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.research-viewer {
+  background: var(--surface-1, #0d0d0d);
+  border: 1px solid var(--surface-3, #2a2a2a);
+  border-radius: 12px;
+  width: min(960px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 20px 24px;
+  font-family: inherit;
+}
+.research-viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border-bottom: 1px solid var(--surface-3, #2a2a2a);
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+}
+.research-viewer-title { font-size: 16px; font-weight: 600; }
+.research-viewer-status { font-size: 11px; opacity: 0.7; margin-top: 4px; }
+.research-viewer-actions { display: flex; gap: 8px; }
+.research-viewer-actions button {
+  background: var(--surface-2, #1a1a1a);
+  color: inherit;
+  border: 1px solid var(--surface-3, #2a2a2a);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.research-viewer-actions button:hover { border-color: var(--accent, #4ea1ff); }
+.research-viewer-clarify {
+  background: rgba(255, 155, 61, 0.07);
+  border: 1px solid rgba(255, 155, 61, 0.3);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.research-viewer-clarify h3 { margin: 0 0 6px; font-size: 13px; }
+.research-viewer-hint { font-size: 11px; opacity: 0.7; margin-bottom: 10px; }
+.research-viewer-clarify-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.research-viewer-clarify-row input {
+  background: var(--surface-2, #111);
+  border: 1px solid var(--surface-3, #2a2a2a);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+}
+.research-viewer-clarify-actions { display: flex; gap: 8px; }
+.research-viewer-clarify-actions button {
+  background: var(--accent, #4ea1ff);
+  color: #000;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.research-viewer-clarify-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.research-viewer-outline ol,
+.research-viewer-sources ol {
+  padding-left: 20px;
+  font-size: 12px;
+}
+.research-viewer-section-status { opacity: 0.6; }
+.research-viewer-markdown-body {
+  background: var(--surface-2, #111);
+  border: 1px solid var(--surface-3, #2a2a2a);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-family: inherit;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.research-viewer-empty { font-size: 12px; opacity: 0.6; }
+.research-viewer-loading { padding: 24px; opacity: 0.7; font-size: 12px; }

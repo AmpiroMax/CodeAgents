@@ -27,6 +27,45 @@ DEFAULT_EXCLUDES = {
 INDEX_DIR = ".codeagents"
 INDEX_DB = "index.sqlite3"
 
+# Code chunking parameters (Phase 1 RAG):
+#   * 20 lines per chunk, overlap of 4 lines.
+#   * AST nodes longer than this are split into windows so the embedder
+#     gets uniform-sized context instead of 500-line monsters.
+CHUNK_LINES = 20
+CHUNK_OVERLAP = 4
+
+# Try to load sqlite-vec at module import; fall back to JSON-vector cosine
+# similarity if the extension isn't available (e.g. on systems where the
+# wheel didn't ship a binary). When loaded, semantic search runs as
+# ``vec_chunks MATCH ?`` k-NN inside SQLite, ~10–100x faster than the
+# Python loop on workspaces with thousands of chunks.
+try:
+    import sqlite_vec  # type: ignore
+
+    _SQLITE_VEC_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised on systems without the wheel
+    sqlite_vec = None  # type: ignore[assignment]
+    _SQLITE_VEC_AVAILABLE = False
+
+
+def _maybe_load_vec(conn: sqlite3.Connection) -> bool:
+    """Attempt to load the ``sqlite-vec`` extension into ``conn``.
+
+    Returns ``True`` when ``vec0`` is available afterwards. Failures are
+    swallowed so callers can transparently fall back to the JSON-vector
+    cosine path.
+    """
+
+    if not _SQLITE_VEC_AVAILABLE:
+        return False
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)  # type: ignore[union-attr]
+        conn.enable_load_extension(False)
+        return True
+    except (sqlite3.OperationalError, AttributeError):
+        return False
+
 
 @dataclass(frozen=True)
 class FileRecord:
@@ -275,6 +314,17 @@ class WorkspaceIndexer:
             )
         )
         batch_size = 32
+        # Detect sqlite-vec lazily so embedding still works on installs
+        # without the extension. ``_init_db`` already attempted to load it.
+        has_vec = False
+        try:
+            has_vec = bool(
+                conn.execute(
+                    "select 1 from sqlite_master where name = 'vec_chunks'"
+                ).fetchone()
+            )
+        except sqlite3.OperationalError:
+            has_vec = False
         for i in range(0, len(rows), batch_size):
             batch = rows[i : i + batch_size]
             vectors = embedding_client.embed([row[1] for row in batch], model=model)
@@ -286,6 +336,17 @@ class WorkspaceIndexer:
                     """,
                     (row[0], model or "", len(vector), json.dumps(vector, separators=(",", ":"))),
                 )
+                if has_vec and len(vector) == 768:
+                    try:
+                        import struct
+
+                        blob = struct.pack(f"{len(vector)}f", *vector)
+                        conn.execute(
+                            "insert or replace into vec_chunks(chunk_id, embedding) values (?, ?)",
+                            (row[0], blob),
+                        )
+                    except sqlite3.OperationalError:
+                        has_vec = False
 
     def _symbol_search(
         self, conn: sqlite3.Connection, query: str, *, limit: int
@@ -406,7 +467,9 @@ class IgnoreRules:
     @classmethod
     def from_workspace(cls, root: Path) -> "IgnoreRules":
         patterns: list[str] = []
-        for name in (".gitignore", ".cursorignore"):
+        # ``.codeagentsignore`` is the project-specific override that takes
+        # precedence over the user's ``.gitignore`` when listed last.
+        for name in (".gitignore", ".cursorignore", ".codeagentsignore"):
             path = root / name
             if not path.exists():
                 continue
@@ -492,13 +555,20 @@ def extract_symbols(path: Path, *, text: str, root: Path | None = None) -> list[
 
 
 def build_chunks(path: Path, *, text: str, root: Path) -> list[ChunkRecord]:
+    """Slice ``text`` into ~20-line embedder-friendly chunks.
+
+    For Python we walk the AST and split each function/class body into
+    sliding 20-line windows (overlap 4) so semantic boundaries are
+    preserved while chunks stay roughly uniform in size. Other file types
+    use plain line windows with the same shape.
+    """
+
     rel = str(path.relative_to(root))
     suffix = path.suffix.lower()
     if suffix == ".py":
         return _python_chunks(rel, text)
-    if suffix in {".md", ".markdown"}:
-        return _line_chunks(rel, "markdown", text, max_lines=80)
-    return _line_chunks(rel, _language_for(path), text, max_lines=120)
+    kind = "markdown" if suffix in {".md", ".markdown"} else _language_for(path)
+    return _line_chunks(rel, kind, text, max_lines=CHUNK_LINES, overlap=CHUNK_OVERLAP)
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -512,7 +582,10 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _init_db(conn: sqlite3.Connection) -> None:
+def _init_db(conn: sqlite3.Connection) -> bool:
+    """Initialise schema. Returns True when sqlite-vec is loaded into ``conn``."""
+
+    has_vec = _maybe_load_vec(conn)
     conn.execute("pragma foreign_keys = on")
     conn.execute(
         """
@@ -567,6 +640,22 @@ def _init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    if has_vec:
+        # Mirror table for fast k-NN. We keep ``embeddings`` as the source
+        # of truth (json) so queries still work without the extension; vec
+        # acts as an accelerator overlay populated alongside.
+        try:
+            conn.execute(
+                """
+                create virtual table if not exists vec_chunks
+                using vec0(chunk_id text primary key, embedding float[768])
+                """
+            )
+        except sqlite3.OperationalError:
+            # Some sqlite-vec builds reject the schema (older API) — just
+            # disable the accelerator path.
+            return False
+    return has_vec
 
 
 def _is_excluded(root: Path, path: Path) -> bool:
@@ -625,12 +714,14 @@ def _symbol_from_node(
 
 
 def _python_chunks(rel: str, text: str) -> list[ChunkRecord]:
+    """Split a Python file along AST boundaries, then slice each node into 20-line windows."""
+
     lines = text.splitlines()
     chunks: list[ChunkRecord] = []
     try:
         tree = ast.parse(text)
     except SyntaxError:
-        return _line_chunks(rel, "python", text, max_lines=120)
+        return _line_chunks(rel, "python", text, max_lines=CHUNK_LINES, overlap=CHUNK_OVERLAP)
     nodes = [
         node for node in ast.walk(tree)
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
@@ -638,23 +729,53 @@ def _python_chunks(rel: str, text: str) -> list[ChunkRecord]:
     for node in sorted(nodes, key=lambda item: getattr(item, "lineno", 0)):
         start = getattr(node, "lineno", 1)
         end = getattr(node, "end_lineno", start)
-        chunk_text = "\n".join(lines[start - 1:end])
         kind = "class" if isinstance(node, ast.ClassDef) else "function"
-        chunks.append(_make_chunk(rel, kind, start, end, chunk_text))
+        node_lines = lines[start - 1:end]
+        # Slide a window over the node body so even a 200-line function is
+        # broken into ~10 evenly-sized embeddings.
+        step = max(1, CHUNK_LINES - CHUNK_OVERLAP)
+        if len(node_lines) <= CHUNK_LINES:
+            chunk_text = "\n".join(node_lines)
+            chunks.append(_make_chunk(rel, kind, start, end, chunk_text))
+            continue
+        for offset in range(0, len(node_lines), step):
+            window = node_lines[offset : offset + CHUNK_LINES]
+            if not window:
+                break
+            wstart = start + offset
+            wend = wstart + len(window) - 1
+            chunks.append(_make_chunk(rel, kind, wstart, wend, "\n".join(window)))
+            if offset + CHUNK_LINES >= len(node_lines):
+                break
     if not chunks and text.strip():
-        chunks.append(_make_chunk(rel, "module", 1, max(len(lines), 1), text))
+        # Fall through to plain line windows for top-level scripts.
+        return _line_chunks(rel, "module", text, max_lines=CHUNK_LINES, overlap=CHUNK_OVERLAP)
     return chunks
 
 
-def _line_chunks(rel: str, kind: str, text: str, *, max_lines: int) -> list[ChunkRecord]:
+def _line_chunks(
+    rel: str,
+    kind: str,
+    text: str,
+    *,
+    max_lines: int,
+    overlap: int = 0,
+) -> list[ChunkRecord]:
+    """Slide a window of ``max_lines`` (with ``overlap`` lines of repeat) across ``text``."""
+
     lines = text.splitlines()
     if not lines:
         return []
+    step = max(1, max_lines - overlap)
     chunks: list[ChunkRecord] = []
-    for start in range(0, len(lines), max_lines):
+    for start in range(0, len(lines), step):
         selected = lines[start : start + max_lines]
+        if not selected:
+            break
         chunk_text = "\n".join(selected)
         chunks.append(_make_chunk(rel, kind, start + 1, start + len(selected), chunk_text))
+        if start + max_lines >= len(lines):
+            break
     return chunks
 
 

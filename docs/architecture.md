@@ -33,6 +33,49 @@ flowchart TD
     AgentAPI --> Audit[Audit_Log]
 ```
 
+## Python source layout (post-Stage-7 refactor)
+
+```
+src/codeagents/
+├── core/                   facade + agent abstractions
+│   ├── modes/              ModeSpec registry + per-mode prompt resolver
+│   │   └── prompts.py      reads registry/prompts/modes/<mode>.json
+│   └── conversation/       situational policies (e.g. plan execution)
+├── tools/                  single source of truth for native tools
+│   ├── _registry.py        ToolSpec / ParamSpec / ToolRegistry
+│   ├── _native_specs.py    descriptions + parameter schemas (was config/tools.toml)
+│   ├── native_code.py      handlers (read/write/edit/grep/glob/bash/web/...)
+│   ├── pdf.py · research.py · kg.py · rag.py
+├── stores/                 (skeleton; ChatStore/PlanStore/etc. still at root)
+├── rag/                    (skeleton; indexer/chat_rag still at root)
+├── observability/          shared _jsonl helper + (re-export skeleton)
+├── surfaces/
+│   ├── http/router.py      Route + dispatch (used by server.py do_GET)
+│   └── mcp/                MCP server entry point shim
+├── modes/                  back-compat shim → core.modes
+├── tools_native/           back-compat shim → tools/
+└── (legacy flat modules: agent.py, server.py, runtime.py, schemas.py,
+   permissions.py, workspace.py, chat_store.py, plan_store.py,
+   research_store.py, kg_store.py, indexer.py, ...)
+```
+
+Single sources of truth:
+
+* **Native tool descriptions / parameter schemas** —
+  [`src/codeagents/tools/_native_specs.py`](../src/codeagents/tools/_native_specs.py).
+  No more parallel TOML.
+* **Mode definitions** —
+  [`src/codeagents/core/modes/__init__.py`](../src/codeagents/core/modes/__init__.py).
+  One entry per mode covers tool whitelist, permission filter and UI colour.
+* **System prompts** —
+  [`registry/prompts/modes/<mode>.json`](../registry/prompts/modes/).
+  Each file ships a ``default`` plus a ``models`` map of full per-model
+  prompts. Loader: `core/modes/prompts.py::resolve_prompt(mode, model)`.
+* **MCP server registry** —
+  [`registry/mcp.toml`](../registry/mcp.toml) (was inside ``config/tools.toml``).
+* **Default permission policy** —
+  [`registry/permissions.toml`](../registry/permissions.toml).
+
 ## Components
 
 `runtime`
@@ -95,12 +138,12 @@ The stable internal abstraction is `ToolSpec`; MCP tools are adapted into that a
 
 ## MCP client and CodeAgents MCP server
 
-- [`src/codeagents/mcp/bridge.py`](../src/codeagents/mcp/bridge.py) discovers enabled servers from `[mcp.*]` in `config/tools.toml`, runs `tools/list` over stdio, and registers each remote tool as `mcp.<server>.<tool>` with `mcp_input_schema` for OpenAI-style payloads. Set `CODEAGENTS_DISABLE_MCP=1` to skip.
+- [`src/codeagents/mcp/bridge.py`](../src/codeagents/mcp/bridge.py) discovers enabled servers from `[mcp.*]` in `registry/mcp.toml`, runs `tools/list` over stdio, and registers each remote tool as `mcp.<server>.<tool>` with `mcp_input_schema` for OpenAI-style payloads. Set `CODEAGENTS_DISABLE_MCP=1` to skip.
 - [`src/codeagents/mcp_server.py`](../src/codeagents/mcp_server.py) exposes native workspace tools to external MCP clients (`codeagents-mcp` entry point). Workspace root: env `CODEAGENTS_WORKSPACE`.
 
 ## LSP (optional)
 
-- [`config/lsp.toml`](../config/lsp.toml): enable a server under `[servers.*]` to register the native tool `lsp_query` (`document_symbols`, `workspace_symbol`). Implementation: [`src/codeagents/lsp/`](../src/codeagents/lsp/).
+- [`config/lsp.toml`](../config/lsp.toml): enable a server under `[servers.*]` to register the native tool `lsp_query` (`document_symbols`, `workspace_symbol`). Implementation: [`src/codeagents/lsp/`](../src/codeagents/lsp/). (Future work: this file is slated to migrate under `registry/`.)
 
 ## Platform hooks (indexing, documents, evals)
 

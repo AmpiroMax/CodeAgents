@@ -1,4 +1,10 @@
-"""Discover MCP servers from tools.toml and register proxied tools on ToolRegistry."""
+"""Discover MCP servers from registry/mcp.toml and register proxied tools.
+
+Reads ``[mcp.<server>]`` tables from the supplied config path (typically
+``registry/mcp.toml``), connects to each enabled server over stdio, and
+registers each remote tool as ``mcp.<server>.<tool>``. Set the env var
+``CODEAGENTS_DISABLE_MCP=1`` to skip discovery entirely.
+"""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 base_url = "http://localhost:11434/v1"
 api_key_env = "CODEAGENTS_API_KEY"
 default_model = "general"
-embedding_model = "nomic-embed-text"
+embedding_model = "embeddinggemma:300m"
 
 [models.general]
 name = "gemma4:31b"

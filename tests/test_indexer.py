@@ -98,3 +98,49 @@ def test_semantic_search_uses_fake_embeddings(tmp_path: Path) -> None:
 
     assert results
     assert results[0].path == "auth.py"
+
+
+def test_codeagentsignore_filters_paths(tmp_path: Path) -> None:
+    (tmp_path / ".codeagentsignore").write_text("secret/**\n", encoding="utf-8")
+    (tmp_path / "secret").mkdir()
+    (tmp_path / "secret" / "key.py").write_text("API_KEY = 'x'\n", encoding="utf-8")
+    (tmp_path / "ok.py").write_text("def ok():\n    return 1\n", encoding="utf-8")
+
+    index = build_index(tmp_path)
+    paths = {record.path for record in index.files}
+
+    assert "ok.py" in paths
+    assert "secret/key.py" not in paths
+
+
+def test_chunks_use_20_line_windows(tmp_path: Path) -> None:
+    long_text = "\n".join(f"line_{i}" for i in range(60)) + "\n"
+    (tmp_path / "long.txt").write_text(long_text, encoding="utf-8")
+
+    build_index(tmp_path)
+    with sqlite3.connect(tmp_path / ".codeagents" / "index.sqlite3") as conn:
+        rows = conn.execute(
+            "select start_line, end_line from chunks where path = 'long.txt' "
+            "order by start_line"
+        ).fetchall()
+
+    assert len(rows) >= 3
+    spans = [(end - start + 1) for start, end in rows]
+    assert max(spans) <= 20
+
+
+def test_search_code_tool_returns_lexical_results(tmp_path: Path) -> None:
+    from codeagents.indexer import build_index
+    from codeagents.tools_native.code import search_code
+    from codeagents.workspace import Workspace
+
+    (tmp_path / "auth.py").write_text(
+        "def authenticate(user):\n    return True\n", encoding="utf-8"
+    )
+    build_index(tmp_path)
+    ws = Workspace.from_path(tmp_path)
+
+    out = search_code(ws, {"query": "authenticate", "k": 3})
+    assert out["query"] == "authenticate"
+    paths = [r["path"] for r in out["results"]]
+    assert "auth.py" in paths

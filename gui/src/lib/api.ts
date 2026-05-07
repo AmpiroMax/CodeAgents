@@ -130,6 +130,138 @@ export type ContextUsage = {
   context_window: number;
 };
 
+// Phase 2.A.5 — pre-call token estimate served by GET /budget/preview.
+export type BudgetPreview = {
+  model: string;
+  last_prompt_tokens: number;
+  estimated_next: number;
+  context_window: number;
+  warn: boolean;
+  calibration: {
+    factor?: number;
+    samples?: number;
+    last_real?: number;
+    last_estimate?: number;
+  };
+};
+
+// Phase 2.B research types ────────────────────────────────────────
+export type ResearchSection = {
+  title: string;
+  questions: string[];
+  facts: Array<{ claim: string; span?: string; source_url?: string }>;
+  draft: string;
+  status: string;
+};
+
+export type ResearchReport = {
+  version: number;
+  id: string;
+  chat_id: string;
+  query: string;
+  status: string;
+  outline: ResearchSection[];
+  sources: Array<{ url: string; ts?: number }>;
+  clarify: {
+    questions: string[];
+    answers: Array<{ question: string; answer: string }>;
+    skipped: boolean;
+  };
+  created_ts: number;
+  updated_ts: number;
+};
+
+export async function listResearchReports(
+  base: string,
+  chatId: string,
+): Promise<ResearchReport[]> {
+  const r = await fetch(`${base}/research/${encodeURIComponent(chatId)}`);
+  if (!r.ok) return [];
+  const j = (await r.json()) as { reports?: ResearchReport[] };
+  return j.reports ?? [];
+}
+
+export async function loadResearchReport(
+  base: string,
+  chatId: string,
+  reportId: string,
+): Promise<{ report: ResearchReport; markdown: string } | null> {
+  const r = await fetch(
+    `${base}/research/${encodeURIComponent(chatId)}/${encodeURIComponent(reportId)}`,
+  );
+  if (!r.ok) return null;
+  return (await r.json()) as { report: ResearchReport; markdown: string };
+}
+
+export async function cancelResearchReport(
+  base: string,
+  chatId: string,
+  reportId: string,
+): Promise<boolean> {
+  const r = await fetch(
+    `${base}/research/${encodeURIComponent(chatId)}/${encodeURIComponent(reportId)}/cancel`,
+    { method: "POST" },
+  );
+  return r.ok;
+}
+
+export async function fetchBudgetPreview(base: string): Promise<BudgetPreview | null> {
+  try {
+    const r = await fetch(`${base}/budget/preview`);
+    if (!r.ok) return null;
+    return (await r.json()) as BudgetPreview;
+  } catch {
+    return null;
+  }
+}
+
+export type ToolParam = {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  enum: string[] | null;
+};
+
+export type ToolInfo = {
+  name: string;
+  description: string;
+  permission: string;
+  kind: string;
+  parameters: ToolParam[];
+};
+
+export type ToolsByMode = { modes: Record<string, ToolInfo[]> };
+
+export async function fetchTools(base: string): Promise<ToolsByMode | null> {
+  try {
+    const r = await fetch(`${base}/tools`);
+    if (!r.ok) return null;
+    return (await r.json()) as ToolsByMode;
+  } catch {
+    return null;
+  }
+}
+
+export type ModeDescriptor = {
+  name: string;
+  tool_whitelist: string[];
+  allowed_permissions: string[] | null;
+  ui_color: string;
+};
+
+export type ModesPayload = { modes: ModeDescriptor[] };
+
+export async function fetchModes(base: string): Promise<ModesPayload | null> {
+  try {
+    const r = await fetch(`${base}/modes`);
+    if (!r.ok) return null;
+    return (await r.json()) as ModesPayload;
+  } catch {
+    return null;
+  }
+}
+
 export type PlanStepStatus = "pending" | "in_progress" | "done" | "skipped";
 export type PlanStatus = "draft" | "building" | "completed" | "rejected";
 
@@ -303,4 +435,105 @@ export async function postChatStream(
     throw new Error(t || r.statusText);
   }
   return r.body;
+}
+
+export type MetricsSnapshot = {
+  t: number;
+  cpu_percent: number;
+  rss_mb: number;
+  ram_total_mb: number;
+  ram_used_percent: number;
+  gpu: {
+    ok: boolean;
+    gpus: Array<{
+      name: string;
+      memory_used_mb: number;
+      memory_total_mb: number;
+      utilization_percent: number;
+    }>;
+  };
+  ollama_ps: {
+    ok: boolean;
+    models: Array<{ name?: string; model?: string; size?: number }>;
+  };
+};
+
+export async function fetchMetricsHistory(
+  base: string,
+): Promise<MetricsSnapshot[]> {
+  try {
+    const r = await fetch(`${base}/metrics/history`);
+    if (!r.ok) return [];
+    const j = (await r.json()) as { samples?: MetricsSnapshot[] };
+    return j.samples ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Subscribe to ``GET /metrics/stream`` (NDJSON, one snapshot per line).
+ *  Returns an ``unsubscribe`` callback. The connection auto-reconnects
+ *  on transient failures with a small backoff. */
+export function subscribeMetrics(
+  base: string,
+  onSnapshot: (snap: MetricsSnapshot) => void,
+): () => void {
+  const controller = new AbortController();
+  let stopped = false;
+
+  async function loop(): Promise<void> {
+    let backoff = 500;
+    while (!stopped) {
+      try {
+        const r = await fetch(`${base}/metrics/stream`, {
+          signal: controller.signal,
+        });
+        if (!r.ok || !r.body) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        backoff = 500;
+        while (!stopped) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let idx = buf.indexOf("\n");
+          while (idx >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (line) {
+              try {
+                onSnapshot(JSON.parse(line) as MetricsSnapshot);
+              } catch {
+                // ignore malformed line
+              }
+            }
+            idx = buf.indexOf("\n");
+          }
+        }
+      } catch {
+        if (stopped) return;
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 5000);
+      }
+    }
+  }
+
+  void loop();
+  return () => {
+    stopped = true;
+    controller.abort();
+  };
+}
+
+export async function refreshIndex(base: string): Promise<{ refreshed: boolean }> {
+  try {
+    const r = await fetch(`${base}/index/refresh`, { method: "POST" });
+    if (!r.ok) return { refreshed: false };
+    return (await r.json()) as { refreshed: boolean };
+  } catch {
+    return { refreshed: false };
+  }
 }

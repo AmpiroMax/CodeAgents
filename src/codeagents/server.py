@@ -129,168 +129,306 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         started = time.perf_counter()
+        self._req_started = started
         if self._serve_gui_static(started):
             return
-        if self.path == "/health":
-            from codeagents import __version__ as _v
+        from codeagents.surfaces.http.router import dispatch
 
-            self._send_json({"ok": True, "version": _v})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/version":
-            from codeagents import __version__ as _v
-
-            self._send_json({"version": _v})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/models":
-            config = load_app_config()
-            self._send_json(
-                {
-                    "models": [
-                        {
-                            "key": model.key,
-                            "name": model.name,
-                            "role": model.role,
-                            "context_tokens": model.context_tokens,
-                        }
-                        for model in config.models.values()
-                    ]
-                }
-            )
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/tools":
-            self._send_json(
-                {
-                    "tools": [
-                        {
-                            "name": tool.name,
-                            "kind": tool.kind,
-                            "permission": tool.permission.value,
-                            "enabled": tool.enabled,
-                            "description": tool.description,
-                        }
-                        for tool in self.agent.tools.list(include_disabled=True)
-                    ]
-                }
-            )
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/inference/models":
-            registry_models = [
-                {
-                    "key": item.key,
-                    "display_name": item.display_name,
-                    "backend": item.backend,
-                    "runtime_model": item.runtime_model,
-                    "profile": item.profile,
-                    "weights_path": item.weights_path,
-                    "source": item.source,
-                    "notes": item.notes,
-                }
-                for item in self.model_service.list_models()
-            ]
-            registry_runtime_names = {
-                m["runtime_model"] for m in registry_models
-            }
-            ollama_models = []
-            try:
-                from codeagents.model_params import ensure_for_models
-                installed = list(self.model_service.runtime.list_models())
-                # Auto-create per-model param config files (won't overwrite existing).
-                try:
-                    ensure_for_models(installed + [m["runtime_model"] for m in registry_models])
-                except Exception:
-                    pass
-                for name in installed:
-                    if name not in registry_runtime_names:
-                        ollama_models.append({
-                            "key": name,
-                            "display_name": name,
-                            "backend": "ollama",
-                            "runtime_model": name,
-                            "profile": name,
-                            "source": f"ollama:{name}",
-                            "notes": "Installed in Ollama",
-                        })
-            except Exception:
-                pass
-            self._send_json({"models": registry_models + ollama_models})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/inference/logs":
-            self._send_json({"logs": InferenceLogger().tail()})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/service/logs":
-            self._send_json({"logs": self.request_logger.tail()})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/metrics/resources":
-            self._send_json(
-                collect_resource_snapshot(workspace_root=self.agent.workspace.root)
-            )
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/chats":
-            self._send_json(
-                {
-                    "chats": [
-                        item.model_dump(mode="json", exclude_none=True)
-                        for item in self.chat_store.list()
-                    ]
-                }
-            )
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path.startswith("/chats/"):
-            chat_id = self.path.removeprefix("/chats/").strip("/")
-            chat = self.chat_store.load(chat_id)
-            self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path == "/plans" or self.path.startswith("/plans?"):
-            from urllib.parse import parse_qs, urlsplit
-
-            q = parse_qs(urlsplit(self.path).query)
-            status_filter = (q.get("status") or ["all"])[0].lower()
-            chat_filter = (q.get("chat_id") or [""])[0]
-            plans = self.plan_store.list()
-            if status_filter == "active":
-                from codeagents.plan_store import ACTIVE_STATUSES
-                plans = [p for p in plans if p.status in ACTIVE_STATUSES]
-            elif status_filter in {"draft", "building", "completed", "rejected"}:
-                plans = [p for p in plans if p.status == status_filter]
-            if chat_filter:
-                plans = [p for p in plans if p.chat_id == chat_filter]
-            self._send_json({"plans": [p.to_dict() for p in plans]})
-            self._log_request("GET", {}, 200, started)
-            return
-        if self.path.startswith("/plans/"):
-            tail = self.path.removeprefix("/plans/").strip("/")
-            if tail.endswith("/markdown"):
-                plan_id = tail[: -len("/markdown")].strip("/")
-                try:
-                    plan = self.plan_store.load(plan_id)
-                except PlanNotFoundError:
-                    self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
-                    self._log_request("GET", {}, 404, started, error="plan_not_found")
-                    return
-                self._send_json({"id": plan.id, "markdown": plan.to_markdown()})
-                self._log_request("GET", {}, 200, started)
-                return
-            try:
-                plan = self.plan_store.load(tail)
-            except PlanNotFoundError:
-                self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
-                self._log_request("GET", {}, 404, started, error="plan_not_found")
-                return
-            self._send_json({"plan": plan.to_dict()})
-            self._log_request("GET", {}, 200, started)
+        if dispatch(self, self._GET_ROUTES, "GET", self.path):
             return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
         self._log_request("GET", {}, 404, started, error="not_found")
+
+    # ── GET route handlers ─────────────────────────────────────────────
+    # The route table at the bottom of this class maps each path to one
+    # of these methods. Add a new endpoint by:
+    #   1. writing a ``_get_<name>`` method here,
+    #   2. registering a ``Route("GET", "_get_<name>", path=..., prefix=...)``
+    #      in :data:`_GET_ROUTES`.
+
+    def _get_health(self) -> None:
+        from codeagents import __version__ as _v
+
+        self._send_json({"ok": True, "version": _v})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_version(self) -> None:
+        from codeagents import __version__ as _v
+
+        self._send_json({"version": _v})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_models(self) -> None:
+        config = load_app_config()
+        self._send_json(
+            {
+                "models": [
+                    {
+                        "key": model.key,
+                        "name": model.name,
+                        "role": model.role,
+                        "context_tokens": model.context_tokens,
+                    }
+                    for model in config.models.values()
+                ]
+            }
+        )
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_tools(self) -> None:
+        # Returns BOTH:
+        #   ``tools``: flat list of every registered tool (legacy
+        #             diagnostic shape, includes disabled ones).
+        #   ``modes``: per-mode view (agent / plan / ask / research) of the
+        #             exact tool surface the model sees, with parameter
+        #             schemas. Consumed by the GUI command palette to
+        #             render "Available tools" → mode → tool → details.
+        from codeagents.agent import _allowed_permissions_for_mode
+
+        payload: dict[str, Any] = {
+            "tools": [
+                {
+                    "name": tool.name,
+                    "kind": tool.kind,
+                    "permission": tool.permission.value,
+                    "enabled": tool.enabled,
+                    "description": tool.description,
+                }
+                for tool in self.agent.tools.list(include_disabled=True)
+            ],
+            "modes": {},
+        }
+        for mode_name in ("agent", "plan", "ask", "research"):
+            allowed = _allowed_permissions_for_mode(mode_name)
+            specs = self.agent._agent_tools_as_specs(
+                allowed_permissions=allowed, mode=mode_name
+            )
+            tools_payload: list[dict[str, Any]] = []
+            for spec in specs:
+                ts = self.agent.tools.get(spec.name)
+                tools_payload.append(
+                    {
+                        "name": spec.name,
+                        "description": spec.description or "",
+                        "permission": ts.permission.value,
+                        "kind": ts.kind,
+                        "parameters": [
+                            {
+                                "name": p.name,
+                                "type": (p.schema_ or {}).get("type", "string"),
+                                "description": p.description or "",
+                                "required": bool(p.required),
+                                "enum": list((p.schema_ or {}).get("enum") or []) or None,
+                            }
+                            for p in spec.parameters
+                        ],
+                    }
+                )
+            payload["modes"][mode_name] = tools_payload
+        self._send_json(payload)
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_modes(self) -> None:
+        # Static descriptors: tool whitelists, allowed permissions and UI
+        # accent colours. Consumed by the GUI to replace the hard-coded
+        # ``MODES`` / ``MODE_COLORS`` constants.
+        from codeagents.core.modes import list_modes
+
+        self._send_json({"modes": list_modes()})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_inference_models(self) -> None:
+        registry_models = [
+            {
+                "key": item.key,
+                "display_name": item.display_name,
+                "backend": item.backend,
+                "runtime_model": item.runtime_model,
+                "profile": item.profile,
+                "weights_path": item.weights_path,
+                "source": item.source,
+                "notes": item.notes,
+            }
+            for item in self.model_service.list_models()
+        ]
+        registry_runtime_names = {m["runtime_model"] for m in registry_models}
+        ollama_models = []
+        try:
+            from codeagents.model_params import ensure_for_models
+            installed = list(self.model_service.runtime.list_models())
+            try:
+                ensure_for_models(
+                    installed + [m["runtime_model"] for m in registry_models]
+                )
+            except Exception:
+                pass
+            for name in installed:
+                if name not in registry_runtime_names:
+                    ollama_models.append({
+                        "key": name,
+                        "display_name": name,
+                        "backend": "ollama",
+                        "runtime_model": name,
+                        "profile": name,
+                        "source": f"ollama:{name}",
+                        "notes": "Installed in Ollama",
+                    })
+        except Exception:
+            pass
+        self._send_json({"models": registry_models + ollama_models})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_inference_logs(self) -> None:
+        self._send_json({"logs": InferenceLogger().tail()})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_service_logs(self) -> None:
+        self._send_json({"logs": self.request_logger.tail()})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_metrics_resources(self) -> None:
+        self._send_json(
+            collect_resource_snapshot(workspace_root=self.agent.workspace.root)
+        )
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_metrics_history(self) -> None:
+        from codeagents.metrics_sampler import get_global_sampler
+
+        sampler = get_global_sampler(
+            jsonl_path=self.agent.workspace.root / ".codeagents" / "metrics.jsonl"
+        )
+        self._send_json({"samples": sampler.history()})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_metrics_stream(self) -> None:
+        self._stream_metrics_ndjson(self._req_started)
+
+    def _get_budget_preview(self) -> None:
+        # Phase 2.A.5: report last observed prompt_tokens and a quick
+        # estimate for the next turn so the GUI can show
+        # ``tokens: last X · next ~Y / ctx``.
+        last = int(getattr(self.agent, "_last_prompt_tokens", 0) or 0)
+        est = int(getattr(self.agent, "_last_estimate", 0) or 0)
+        cw = int(getattr(self.agent, "_last_context_window", 0) or 0)
+        model = getattr(self.agent, "_last_model", "") or ""
+        if cw == 0 and model:
+            try:
+                cw = self.agent.token_budget.context_window(model)
+            except Exception:
+                cw = 0
+        cal = {}
+        if model:
+            try:
+                cal = self.agent.token_budget.calibration(model)
+            except Exception:
+                cal = {}
+        self._send_json(
+            {
+                "model": model,
+                "last_prompt_tokens": last,
+                "estimated_next": est,
+                "context_window": cw,
+                "warn": bool(cw > 0 and (max(last, est) > cw * 0.85)),
+                "calibration": cal,
+            }
+        )
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_research(self) -> None:
+        # ``GET /research/<chat_id>`` -> list of reports.
+        # ``GET /research/<chat_id>/<rid>`` -> a specific report + markdown.
+        tail = self.path.removeprefix("/research/").strip("/").split("/")
+        if not (1 <= len(tail) <= 2 and tail[0]):
+            self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            self._log_request("GET", {}, 404, self._req_started, error="not_found")
+            return
+        chat_id = tail[0]
+        from codeagents.chat_store import default_chats_dir
+        from codeagents.research_store import ResearchStore
+
+        rstore = ResearchStore(default_chats_dir())
+        if len(tail) == 1:
+            items = [r.to_dict() for r in rstore.list(chat_id)]
+            self._send_json({"chat_id": chat_id, "reports": items})
+            self._log_request("GET", {}, 200, self._req_started)
+            return
+        report_id = tail[1]
+        try:
+            rep = rstore.load(chat_id, report_id)
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.NOT_FOUND, "report not found")
+            return
+        markdown = rstore.read_markdown(chat_id, report_id)
+        self._send_json({"report": rep.to_dict(), "markdown": markdown})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_chats_list(self) -> None:
+        self._send_json(
+            {
+                "chats": [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in self.chat_store.list()
+                ]
+            }
+        )
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_chat_one(self) -> None:
+        chat_id = self.path.removeprefix("/chats/").strip("/")
+        chat = self.chat_store.load(chat_id)
+        self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_plans_list(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+
+        q = parse_qs(urlsplit(self.path).query)
+        status_filter = (q.get("status") or ["all"])[0].lower()
+        chat_filter = (q.get("chat_id") or [""])[0]
+        plans = self.plan_store.list()
+        if status_filter == "active":
+            from codeagents.plan_store import ACTIVE_STATUSES
+            plans = [p for p in plans if p.status in ACTIVE_STATUSES]
+        elif status_filter in {"draft", "building", "completed", "rejected"}:
+            plans = [p for p in plans if p.status == status_filter]
+        if chat_filter:
+            plans = [p for p in plans if p.chat_id == chat_filter]
+        self._send_json({"plans": [p.to_dict() for p in plans]})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    def _get_plan_one(self) -> None:
+        tail = self.path.removeprefix("/plans/").strip("/")
+        if tail.endswith("/markdown"):
+            plan_id = tail[: -len("/markdown")].strip("/")
+            try:
+                plan = self.plan_store.load(plan_id)
+            except PlanNotFoundError:
+                self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+                self._log_request(
+                    "GET", {}, 404, self._req_started, error="plan_not_found"
+                )
+                return
+            self._send_json({"id": plan.id, "markdown": plan.to_markdown()})
+            self._log_request("GET", {}, 200, self._req_started)
+            return
+        try:
+            plan = self.plan_store.load(tail)
+        except PlanNotFoundError:
+            self._send_json({"error": "plan_not_found"}, status=HTTPStatus.NOT_FOUND)
+            self._log_request(
+                "GET", {}, 404, self._req_started, error="plan_not_found"
+            )
+            return
+        self._send_json({"plan": plan.to_dict()})
+        self._log_request("GET", {}, 200, self._req_started)
+
+    # ── POST/PATCH/DELETE ──────────────────────────────────────────────
+    # These methods still use an inline ``if/elif`` dispatch chain. They
+    # mostly route to a single endpoint (``/chat``, ``/chats/<id>``,
+    # ``/plans/<id>``) with substantial inline logic; converting them to
+    # the same router-table pattern as :meth:`do_GET` is a follow-up
+    # pass once those bodies have been extracted into helper methods.
 
     def do_POST(self) -> None:
         started = time.perf_counter()
@@ -329,6 +467,23 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"chat": chat.model_dump(mode="json", exclude_none=True)})
                 self._log_request("POST", payload, 200, started)
                 return
+            if self.path.startswith("/research/") and self.path.endswith("/cancel"):
+                # Phase 2.B.4: POST /research/<chat>/<rid>/cancel.
+                trimmed = self.path[len("/research/"):-len("/cancel")].strip("/").split("/")
+                if len(trimmed) == 2 and all(trimmed):
+                    chat_id, report_id = trimmed
+                    from codeagents.chat_store import default_chats_dir
+                    from codeagents.research_store import ResearchStore
+
+                    rstore = ResearchStore(default_chats_dir())
+                    try:
+                        rep = rstore.set_status(chat_id, report_id, "cancelled")
+                    except FileNotFoundError:
+                        self.send_error(HTTPStatus.NOT_FOUND, "report not found")
+                        return
+                    self._send_json({"report": rep.to_dict()})
+                    self._log_request("POST", payload, 200, started)
+                    return
             if self.path.startswith("/plans/") and self.path.endswith("/reject"):
                 plan_id = self.path[len("/plans/"):-len("/reject")].strip("/")
                 if not plan_id:
@@ -454,6 +609,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                         "result": result.result,
                     }
                 )
+                self._log_request("POST", payload, 200, started)
+                return
+            if self.path == "/index/refresh":
+                worker = getattr(type(self), "index_worker", None)
+                if worker is None:
+                    self._send_json({"refreshed": False, "reason": "no_worker"})
+                    self._log_request("POST", payload, 200, started)
+                    return
+                worker.request_refresh()
+                self._send_json({"refreshed": True, "status": worker.status()})
                 self._log_request("POST", payload, 200, started)
                 return
             if self.path == "/index":
@@ -697,6 +862,37 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 pass
         _try_persist()
 
+    def _stream_metrics_ndjson(self, started: float) -> None:
+        """NDJSON stream for ``GET /metrics/stream`` — one snapshot per second.
+
+        Writes are best-effort: any pipe error breaks the loop cleanly so the
+        connection slot is freed.
+        """
+
+        from codeagents.metrics_sampler import get_global_sampler, stream_snapshots
+
+        sampler = get_global_sampler(
+            jsonl_path=self.agent.workspace.root / ".codeagents" / "metrics.jsonl"
+        )
+        stop = threading.Event()
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            for snap in stream_snapshots(sampler, stop=stop):
+                line = json.dumps(snap, ensure_ascii=False) + "\n"
+                try:
+                    self.wfile.write(line.encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+        finally:
+            stop.set()
+        self._log_request("GET", {}, 200, started)
+
     def _persist_chat_from_events(
         self, chat: Chat, events: list[dict[str, Any]]
     ) -> None:
@@ -791,6 +987,62 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 functions=chat.functions,
             )
             self.chat_store.save(saved)
+            self._index_new_messages_async(saved, new_messages)
+
+    def _index_new_messages_async(self, chat: Chat, new_messages: list[Any]) -> None:
+        """Embed user/assistant text from ``new_messages`` into the chat RAG store.
+
+        Fire-and-forget: a worker thread does the actual embed call so the
+        HTTP stream response isn't blocked. Failures are silent — recall
+        will simply return fewer hits.
+        """
+
+        if not chat.id:
+            return
+
+        def _run() -> None:
+            try:
+                from codeagents.chat_rag import index_pending_chat_messages
+                from codeagents.chat_store import default_chats_dir
+                from codeagents.config import load_app_config
+                from codeagents.runtime import OpenAICompatibleRuntime
+                from codeagents.schemas import (
+                    AssistantMessage,
+                    TextContent,
+                    UserMessage,
+                )
+
+                pending: list[tuple[int, str, str]] = []
+                for msg in new_messages:
+                    if not isinstance(msg, (UserMessage, AssistantMessage)):
+                        continue
+                    body_parts: list[str] = []
+                    for block in msg.content:
+                        if isinstance(block, TextContent):
+                            body_parts.append(block.text)
+                    text = "\n".join(p for p in body_parts if p).strip()
+                    if not text:
+                        continue
+                    role = "user" if isinstance(msg, UserMessage) else "assistant"
+                    pending.append((msg.index, role, text))
+                if not pending:
+                    return
+                cfg = load_app_config()
+                embedder = OpenAICompatibleRuntime(cfg.runtime)
+                chat_dir = default_chats_dir() / chat.id
+                index_pending_chat_messages(
+                    chat_dir=chat_dir,
+                    messages=pending,
+                    embedding_client=embedder,
+                    embedding_model=cfg.runtime.embedding_model,
+                )
+            except Exception:
+                # Embedding the chat is best-effort. Swallow any failure
+                # (network, missing model, OOM) so the user-facing reply is
+                # never delayed by a recall-only optimisation.
+                return
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -820,6 +1072,35 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 elapsed_ms=(time.perf_counter() - started) * 1000,
             )
         )
+
+
+# ── HTTP route table ───────────────────────────────────────────────────
+# Single source of truth for "where does GET <path> dispatch?". The
+# router walks this list in order; the first matching route wins. POST,
+# PATCH and DELETE still use an inline if/elif chain in their respective
+# ``do_*`` methods (slated for the same treatment in a follow-up pass).
+
+from codeagents.surfaces.http.router import Route as _Route  # noqa: E402
+
+AgentRequestHandler._GET_ROUTES = (  # type: ignore[attr-defined]
+    _Route("GET", "_get_health", path="/health"),
+    _Route("GET", "_get_version", path="/version"),
+    _Route("GET", "_get_models", path="/models"),
+    _Route("GET", "_get_tools", path="/tools"),
+    _Route("GET", "_get_modes", path="/modes"),
+    _Route("GET", "_get_inference_models", path="/inference/models"),
+    _Route("GET", "_get_inference_logs", path="/inference/logs"),
+    _Route("GET", "_get_service_logs", path="/service/logs"),
+    _Route("GET", "_get_metrics_resources", path="/metrics/resources"),
+    _Route("GET", "_get_metrics_history", path="/metrics/history"),
+    _Route("GET", "_get_metrics_stream", path="/metrics/stream"),
+    _Route("GET", "_get_budget_preview", prefix="/budget/preview"),
+    _Route("GET", "_get_research", prefix="/research/"),
+    _Route("GET", "_get_chats_list", path="/chats"),
+    _Route("GET", "_get_chat_one", prefix="/chats/"),
+    _Route("GET", "_get_plans_list", path="/plans"),
+    _Route("GET", "_get_plan_one", prefix="/plans/"),
+)
 
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -873,6 +1154,22 @@ def serve(
         print(f"Model params dir: {PARAMS_DIR}")
     except Exception as exc:
         print(f"Warning: failed to ensure model param files: {exc}")
+    try:
+        from codeagents.metrics_sampler import get_global_sampler
+
+        get_global_sampler(
+            jsonl_path=workspace / ".codeagents" / "metrics.jsonl"
+        )
+    except Exception as exc:
+        print(f"Warning: metrics sampler did not start: {exc}")
+    try:
+        from codeagents.index_worker import WorkspaceIndexWorker
+
+        index_worker = WorkspaceIndexWorker(workspace=workspace)
+        index_worker.start()
+        Handler.index_worker = index_worker  # type: ignore[attr-defined]
+    except Exception as exc:
+        print(f"Warning: background indexer did not start: {exc}")
     server = ReusableThreadingHTTPServer((host, port), Handler)
     print(f"CodeAgents API listening on http://{host}:{port}")
     print(f"Workspace: {agent.workspace.root}")

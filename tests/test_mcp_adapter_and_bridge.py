@@ -65,7 +65,7 @@ def test_register_mcp_tools_respects_disable_env(
 def test_register_mcp_tools_discovers_when_enabled(tmp_path: Path) -> None:
     """Optional: requires a working MCP server on PATH."""
     reg = ToolRegistry()
-    n = mcp_bridge.register_mcp_tools(reg, Path("config/tools.toml"))
+    n = mcp_bridge.register_mcp_tools(reg, Path("registry/mcp.toml"))
     assert n >= 0
 
 

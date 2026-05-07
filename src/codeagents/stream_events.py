@@ -102,6 +102,23 @@ class StreamTerminalOutputEvent(BaseModel):
     chunk: str = ""
 
 
+class StreamResearchProgressEvent(BaseModel):
+    """Side-channel update from deep-research tools (Phase 2.B.3-4).
+
+    Emitted whenever a research tool finishes successfully, so the GUI's
+    ResearchViewer can render live progress (clarify questions ready, plan
+    drafted, section drafted, report assembled, ...) without parsing tool
+    JSON results in two places.
+    """
+
+    type: Literal["research_progress"] = "research_progress"
+    chat_id: str = ""
+    report_id: str = ""
+    stage: str = ""  # clarify_ready | plan_ready | section_drafted | assembled | ...
+    section_idx: int | None = None
+    detail: dict[str, Any] = {}
+
+
 class StreamContextUsageEvent(BaseModel):
     """Reports prompt/total token usage and the model context window.
 
@@ -131,6 +148,7 @@ AgentStreamEvent = (
     | StreamDoneEvent
     | StreamTerminalOutputEvent
     | StreamContextUsageEvent
+    | StreamResearchProgressEvent
 )
 
 
@@ -155,6 +173,7 @@ def parse_stream_event(data: dict[str, Any]) -> AgentStreamEvent:
         "done": StreamDoneEvent,
         "terminal_output": StreamTerminalOutputEvent,
         "context_usage": StreamContextUsageEvent,
+        "research_progress": StreamResearchProgressEvent,
     }
     cls = mapping.get(str(t))
     if cls is None:

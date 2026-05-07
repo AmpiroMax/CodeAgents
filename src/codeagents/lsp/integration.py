@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from codeagents.config import PROJECT_ROOT
-from codeagents.lsp.config import LspServerEntry, load_lsp_servers
+from codeagents.lsp.config import (
+    LspServerEntry,
+    load_lsp_servers,
+    load_lsp_servers_for_project,
+)
 from codeagents.lsp.session import LspSession
 from codeagents.permissions import Permission
 from codeagents.tools import ParamSpec, ToolRegistry, ToolSpec
@@ -44,8 +48,7 @@ def _lsp_query_handler(
 
 
 def register_lsp_tools_optional(registry: ToolRegistry, workspace: Workspace) -> None:
-    path = PROJECT_ROOT / "config" / "lsp.toml"
-    servers = [s for s in load_lsp_servers(path) if s.enabled]
+    servers = [s for s in load_lsp_servers_for_project(PROJECT_ROOT) if s.enabled]
     if not servers:
         return
     registry.register(

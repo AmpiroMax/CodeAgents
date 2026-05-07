@@ -7,9 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from codeagents.config import PROJECT_ROOT
-from codeagents.tools import load_tool_registry
-from codeagents.tools_native import register_code_tools
+from codeagents.tools import build_native_registry
 from codeagents.workspace import Workspace
 
 
@@ -22,14 +20,13 @@ def main() -> None:
 
     root = Path(os.environ.get("CODEAGENTS_WORKSPACE", ".")).resolve()
     workspace = Workspace.from_path(root)
-    registry = load_tool_registry(PROJECT_ROOT / "config" / "tools.toml")
-    register_code_tools(registry, workspace)
+    registry = build_native_registry(workspace)
 
     mcp = FastMCP(
         "codeagents",
         instructions=(
             "CodeAgents workspace tools: read/search/edit within CODEAGENTS_WORKSPACE. "
-            "Respect server permission policy from config/tools.toml."
+            "Respect the server permission policy from registry/permissions.toml."
         ),
     )
 

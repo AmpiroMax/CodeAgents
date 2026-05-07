@@ -100,7 +100,7 @@ export function Composer({
       <div className="composer-hint">
         <span>
           <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> for
-          newline · <Kbd>⌘</Kbd>K for commands
+          newline · <Kbd>⌘</Kbd>P for commands
         </span>
         <span className="mode-badge" title="Press Tab to switch mode">
           MODE: {mode}

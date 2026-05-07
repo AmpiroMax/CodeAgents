@@ -1,7 +1,0 @@
-Models to pull:
-- granite4.1:30b
-- nemotron-3-nano:30b
-- qwen3-coder-next:q4_K_M
-
-Ollama full documentation
-- https://docs.ollama.com/llms.txt
